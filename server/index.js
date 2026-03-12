@@ -16,7 +16,7 @@ const YoutubeSearchApi = require("youtube-search-api");
 const ffmpegPath = require("ffmpeg-static");
 
 const app = express();
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 const CONFIGURED_FRONTEND_ORIGINS = [
   process.env.FRONTEND_URL,
   process.env.NETLIFY_URL,
@@ -30,7 +30,10 @@ let _cachedSpotifyToken = null;
 let _cachedSpotifyTokenExpiresAt = 0;
 
 // ── yt-dlp binary ────────────────────────────────────────────
-const ytDlpBinaryPath = path.join(__dirname, "yt-dlp.exe");
+// Use platform-appropriate filename; on Linux Render the .exe won't exist but
+// ensureYtDlp() will download the correct binary on first startup.
+const ytDlpBinaryName = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
+const ytDlpBinaryPath = path.join(__dirname, ytDlpBinaryName);
 const ytDlpWrap = new YTDlpWrap(ytDlpBinaryPath);
 
 // Browser whose cookie store yt-dlp uses to bypass YouTube bot detection.
@@ -576,8 +579,8 @@ app.post("/api/spotify/token", async (req, res) => {
 
 ensureYtDlp()
   .then(() => {
-    app.listen(PORT, () =>
-      console.log(`\n🎵  Sound Switch Studio backend → http://localhost:${PORT}\n`)
+    app.listen(PORT, "0.0.0.0", () =>
+      console.log(`\n🎵  Sound Switch Studio backend → http://0.0.0.0:${PORT}\n`)
     );
   })
   .catch((err) => {
