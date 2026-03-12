@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Header } from "@/components/Header";
 import { HeroSection } from "@/components/HeroSection";
 import { ConvertSection } from "@/components/ConvertSection";
@@ -17,6 +17,7 @@ const Index = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<ConversionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
 
   const handleConvert = async (url: string) => {
     setIsLoading(true);
@@ -39,7 +40,9 @@ const Index = () => {
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Something went wrong. Please try again.";
       setError(msg);
-      toast.error(msg);
+      toast.error(msg, { duration: 8000 });
+      // Scroll error into view after render
+      setTimeout(() => errorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
     } finally {
       setIsLoading(false);
     }
@@ -65,10 +68,10 @@ const Index = () => {
 
         {/* Error state */}
         {error && !isLoading && (
-          <div className="max-w-3xl mx-auto animate-fade-in">
+          <div ref={errorRef} className="max-w-3xl mx-auto animate-fade-in">
             <Alert variant="destructive" className="rounded-xl">
               <AlertCircle className="h-4 w-4" />
-              <AlertDescription>{error}</AlertDescription>
+              <AlertDescription className="font-medium">{error}</AlertDescription>
             </Alert>
           </div>
         )}

@@ -18,17 +18,24 @@ const ffmpegPath = require("ffmpeg-static");
 const app = express();
 const PORT = 3001;
 
+// ── Spotify token cache (declared here so all routes can access it) ──
+let _cachedSpotifyToken = null;
+let _cachedSpotifyTokenExpiresAt = 0;
+
 // ── yt-dlp binary ────────────────────────────────────────────
 const ytDlpBinaryPath = path.join(__dirname, "yt-dlp.exe");
 const ytDlpWrap = new YTDlpWrap(ytDlpBinaryPath);
 
 // Browser whose cookie store yt-dlp uses to bypass YouTube bot detection.
 // Set YOUTUBE_COOKIES_BROWSER in .env → edge | chrome | firefox | brave
-const COOKIES_BROWSER = process.env.YOUTUBE_COOKIES_BROWSER || "firefox";
-console.log(`🍪  Cookie browser: ${COOKIES_BROWSER}`);
+const VALID_BROWSERS = new Set(["brave", "chrome", "chromium", "edge", "firefox", "opera", "safari", "vivaldi", "whale"]);
+const _rawBrowser = process.env.YOUTUBE_COOKIES_BROWSER?.trim();
+const COOKIES_BROWSER = _rawBrowser && VALID_BROWSERS.has(_rawBrowser) ? _rawBrowser : null;
+console.log(`🍪  Cookie browser: ${COOKIES_BROWSER ?? "(none — set YOUTUBE_COOKIES_BROWSER in .env)"}`);
+if (_rawBrowser && !COOKIES_BROWSER) console.warn(`⚠️  Invalid YOUTUBE_COOKIES_BROWSER value: "${_rawBrowser}" — ignoring`);
 
 function cookiesArg() {
-  return ["--cookies-from-browser", COOKIES_BROWSER];
+  return COOKIES_BROWSER ? ["--cookies-from-browser", COOKIES_BROWSER] : [];
 }
 
 async function ensureYtDlp() {
@@ -57,6 +64,186 @@ app.use(express.json());
 // ── Health check ──────────────────────────────────────────────
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok" });
+});
+
+// ── Playlist fetcher (server-side — fast server-to-API) ───────
+// GET /api/playlist?url=<spotify-or-youtube-url>
+app.get("/api/playlist", async (req, res) => {
+  const { url } = req.query;
+  if (!url || typeof url !== "string") {
+    return res.status(400).json({ error: "Missing query param: url" });
+  }
+
+  const isSpotify = url.includes("spotify.com");
+  const isYoutube = url.includes("youtube.com") || url.includes("youtu.be");
+
+  if (!isSpotify && !isYoutube) {
+    return res.status(400).json({ error: "URL must be a Spotify or YouTube playlist link." });
+  }
+
+  try {
+    if (isSpotify) {
+      const match = url.match(/playlist\/([A-Za-z0-9]+)/);
+      const playlistId = match?.[1];
+      if (!playlistId) return res.status(400).json({ error: "Invalid Spotify playlist URL." });
+
+      const clientId = process.env.SPOTIFY_CLIENT_ID;
+      const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
+      if (!clientId || !clientSecret) {
+        return res.status(500).json({ error: "Spotify credentials not configured on server." });
+      }
+
+      // Use cached token
+      if (!_cachedSpotifyToken || Date.now() >= _cachedSpotifyTokenExpiresAt - 60_000) {
+        const tokenRes = await fetch("https://accounts.spotify.com/api/token", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
+          },
+          body: "grant_type=client_credentials",
+        });
+        const tokenData = await tokenRes.json();
+        _cachedSpotifyToken = tokenData.access_token;
+        _cachedSpotifyTokenExpiresAt = Date.now() + (tokenData.expires_in ?? 3600) * 1000;
+      }
+      const token = _cachedSpotifyToken;
+      const authHeaders = { Authorization: `Bearer ${token}` };
+
+      const TIMEOUT = AbortSignal.timeout(20_000);
+      // Fetch metadata + first page in parallel
+      const [metaRes, firstRes] = await Promise.all([
+        fetch(`https://api.spotify.com/v1/playlists/${playlistId}`, { headers: authHeaders, signal: TIMEOUT }),
+        fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`, { headers: authHeaders, signal: TIMEOUT }),
+      ]);
+      if (!metaRes.ok) return res.status(502).json({ error: `Spotify API error: ${metaRes.status}` });
+      if (!firstRes.ok) return res.status(502).json({ error: `Spotify API error: ${firstRes.status}` });
+
+      const [meta, firstPage] = await Promise.all([metaRes.json(), firstRes.json()]);
+      const playlistName = meta.name ?? "Spotify Playlist";
+
+      const parsePage = (data) =>
+        (data.items ?? [])
+          .filter((i) => i.track && !i.track.is_local)
+          .map((i) => ({
+            id: i.track.id,
+            title: i.track.name,
+            artist: (i.track.artists ?? []).map((a) => a.name).join(", ") || "Unknown",
+            thumbnail: i.track.album?.images?.[0]?.url ?? "",
+            duration: (() => {
+              const ms = i.track.duration_ms;
+              if (!ms) return "";
+              const s = Math.floor(ms / 1000);
+              return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+            })(),
+            source: "spotify",
+            externalUrl: i.track.external_urls?.spotify,
+          }));
+
+      const tracks = parsePage(firstPage);
+      let nextUrl = firstPage.next ?? null;
+      while (nextUrl) {
+        const pageRes = await fetch(nextUrl, { headers: authHeaders, signal: AbortSignal.timeout(20_000) });
+        if (!pageRes.ok) break;
+        const page = await pageRes.json();
+        tracks.push(...parsePage(page));
+        nextUrl = page.next ?? null;
+      }
+
+      console.log(`[playlist] Spotify "${playlistName}" — ${tracks.length} tracks`);
+      return res.json({ tracks, playlistName, totalCount: tracks.length, source: "spotify" });
+    }
+
+    // ── YouTube via yt-dlp (works with private/unlisted/any playlist) ──
+    console.log(`[playlist] Fetching YouTube playlist via yt-dlp: ${url}`);
+
+    // Reject auto-generated mixes (RD...) — they're infinite and not real playlists
+    const listId = (url.match(/[?&]list=([A-Za-z0-9_-]+)/) ?? [])[1] ?? "";
+    if (/^(RD|RDAMPL|RDEM|RDCLAK)/.test(listId)) {
+      return res.status(400).json({
+        error: "YouTube auto-mix playlists are not supported. Please use a regular playlist that you created or saved.",
+      });
+    }
+
+    const ytdlpArgs = [
+      "--flat-playlist",
+      "--no-warnings",
+      "--print", "%(playlist_title)s\t%(id)s\t%(title)s\t%(uploader)s\t%(channel)s",
+      url,
+    ];
+
+    const { playlistName, tracks } = await new Promise((resolve, reject) => {
+      let playlistName = "YouTube Playlist";
+      const tracks = [];
+      let errBuf = "";
+
+      const proc = spawn(ytDlpBinaryPath, ytdlpArgs);
+
+      let remainder = "";
+      proc.stdout.on("data", (chunk) => {
+        const text = remainder + chunk.toString();
+        const lines = text.split("\n");
+        remainder = lines.pop();
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const [pTitle, id, title, uploader, channel] = line.split("\t");
+          if (!id || id === "NA") continue;
+          if (pTitle && pTitle !== "NA" && playlistName === "YouTube Playlist") playlistName = pTitle;
+          tracks.push({
+            id,
+            title: title && title !== "NA" ? title : "Unknown Title",
+            artist: (uploader && uploader !== "NA" ? uploader : null)
+                 ?? (channel && channel !== "NA" ? channel : null)
+                 ?? "Unknown",
+            thumbnail: `https://i.ytimg.com/vi/${id}/mqdefault.jpg`,
+            source: "youtube",
+            externalUrl: `https://www.youtube.com/watch?v=${id}`,
+            videoId: id,
+          });
+        }
+      });
+
+      proc.stderr.on("data", (d) => (errBuf += d.toString()));
+
+      proc.on("close", (code) => {
+        // flush remainder
+        if (remainder.trim()) {
+          const [pTitle, id, title, uploader, channel] = remainder.split("\t");
+          if (id && id !== "NA") {
+            if (pTitle && pTitle !== "NA" && playlistName === "YouTube Playlist") playlistName = pTitle;
+            tracks.push({
+              id,
+              title: title && title !== "NA" ? title : "Unknown Title",
+              artist: (uploader && uploader !== "NA" ? uploader : null)
+                   ?? (channel && channel !== "NA" ? channel : null)
+                   ?? "Unknown",
+              thumbnail: `https://i.ytimg.com/vi/${id}/mqdefault.jpg`,
+              source: "youtube",
+              externalUrl: `https://www.youtube.com/watch?v=${id}`,
+              videoId: id,
+            });
+          }
+        }
+        if (code !== 0 && tracks.length === 0) {
+          return reject(new Error(errBuf.trim() || `yt-dlp exited with code ${code}`));
+        }
+        resolve({ playlistName, tracks });
+      });
+
+      setTimeout(() => { proc.kill(); reject(new Error("yt-dlp timed out fetching playlist")); }, 60_000);
+    });
+
+    console.log(`[playlist] YouTube "${playlistName}" — ${tracks.length} tracks`);
+    return res.json({ tracks, playlistName, totalCount: tracks.length, source: "youtube" });
+
+  } catch (err) {
+    if (err.name === "AbortError" || err.name === "TimeoutError") {
+      console.error("[playlist] timeout:", err.message);
+      return res.status(504).json({ error: "Request to external API timed out. Please try again." });
+    }
+    console.error("[playlist]", err.message);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Search YouTube for a track query ─────────────────────────
@@ -341,6 +528,7 @@ app.get("/api/download-zip/file/:jobId", (req, res) => {
 // POST /api/spotify/token  body: { clientId?, clientSecret? }
 // Prefers server-side env vars (SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET)
 // so the secret is never exposed in the browser bundle.
+
 app.post("/api/spotify/token", async (req, res) => {
   // Use server env if available; fall back to values sent by the client
   const clientId = process.env.SPOTIFY_CLIENT_ID || req.body.clientId;
@@ -348,6 +536,12 @@ app.post("/api/spotify/token", async (req, res) => {
   if (!clientId || !clientSecret) {
     return res.status(400).json({ error: "Spotify credentials not configured" });
   }
+
+  // Return cached token if it still has >60 s remaining
+  if (_cachedSpotifyToken && Date.now() < _cachedSpotifyTokenExpiresAt - 60_000) {
+    return res.json({ access_token: _cachedSpotifyToken, expires_in: Math.floor((_cachedSpotifyTokenExpiresAt - Date.now()) / 1000) });
+  }
+
   try {
     const tokenRes = await fetch("https://accounts.spotify.com/api/token", {
       method: "POST",
@@ -358,6 +552,10 @@ app.post("/api/spotify/token", async (req, res) => {
       body: "grant_type=client_credentials",
     });
     const data = await tokenRes.json();
+    if (data.access_token) {
+      _cachedSpotifyToken = data.access_token;
+      _cachedSpotifyTokenExpiresAt = Date.now() + (data.expires_in ?? 3600) * 1000;
+    }
     return res.json(data);
   } catch (err) {
     return res.status(500).json({ error: err.message });

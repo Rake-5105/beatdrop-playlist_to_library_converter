@@ -30,39 +30,21 @@ export interface ConversionResult {
 }
 
 const BACKEND = "http://localhost:3001";
-const SPOTIFY_CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID as string | undefined;
-const SPOTIFY_CLIENT_SECRET = import.meta.env.VITE_SPOTIFY_CLIENT_SECRET as string | undefined;
-const YOUTUBE_API_KEY = import.meta.env.VITE_YOUTUBE_API_KEY as string | undefined;
 
-// ── Backend health check ──────────────────────────────────────
+// ── Backend health check (cached 10 s so it never blocks twice) ──
+let _backendOk: boolean | null = null;
+let _backendCheckedAt = 0;
 export async function isBackendRunning(): Promise<boolean> {
+  const now = Date.now();
+  if (_backendOk !== null && now - _backendCheckedAt < 10_000) return _backendOk;
   try {
-    const res = await fetch(`${BACKEND}/api/health`, { signal: AbortSignal.timeout(5000) });
-    return res.ok;
+    const res = await fetch(`${BACKEND}/api/health`, { signal: AbortSignal.timeout(3000) });
+    _backendOk = res.ok;
   } catch {
-    return false;
+    _backendOk = false;
   }
-}
-
-// ── Spotify token via backend proxy (avoids CORS) ────────────
-async function getSpotifyToken(): Promise<string | null> {
-  if (!SPOTIFY_CLIENT_ID || !SPOTIFY_CLIENT_SECRET) return null;
-  try {
-    // Server reads credentials from its own .env (SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET).
-    // We still send them as a fallback in case the server env vars aren't set yet.
-    const res = await fetch(`${BACKEND}/api/spotify/token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        clientId: SPOTIFY_CLIENT_ID,
-        clientSecret: SPOTIFY_CLIENT_SECRET,
-      }),
-    });
-    const data = await res.json();
-    return data.access_token ?? null;
-  } catch {
-    return null;
-  }
+  _backendCheckedAt = Date.now();
+  return _backendOk;
 }
 
 // ── Search YouTube for a track title+artist → returns videoId ─
@@ -249,133 +231,48 @@ export async function downloadAllTracks(
 
 // ── Fetch Spotify playlist ────────────────────────────────────
 export async function fetchSpotifyPlaylist(url: string): Promise<ConversionResult> {
-  const match = url.match(/playlist\/([A-Za-z0-9]+)/);
-  const playlistId = match?.[1];
-
-  if (!SPOTIFY_CLIENT_ID || !SPOTIFY_CLIENT_SECRET) {
-    throw new Error(
-      "Spotify credentials not set. Add VITE_SPOTIFY_CLIENT_ID and VITE_SPOTIFY_CLIENT_SECRET to your .env file, then restart the server."
-    );
-  }
-
-  const token = await getSpotifyToken();
-  if (!token) {
-    throw new Error("Failed to get Spotify token. Check your Client ID and Client Secret.");
-  }
-  if (!playlistId) {
-    throw new Error("Invalid Spotify playlist URL. Make sure it contains /playlist/...");
-  }
-
-  const tracks: Track[] = [];
-  let nextUrl: string | null =
-    `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`;
-  let playlistName = "Spotify Playlist";
-
-  const metaRes = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}`, {
-    headers: { Authorization: `Bearer ${token}` },
+  const res = await fetch(`${BACKEND}/api/playlist?url=${encodeURIComponent(url)}`, {
+    signal: AbortSignal.timeout(60_000),
   });
-  if (!metaRes.ok) throw new Error(`Spotify API error: ${metaRes.status}`);
-  const meta = await metaRes.json();
-  playlistName = meta.name ?? playlistName;
-
-  // Paginate — no limit
-  while (nextUrl) {
-    const res = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) throw new Error(`Spotify API error while paginating: ${res.status}`);
-    const data = await res.json();
-
-    for (const item of data.items ?? []) {
-      const t = item.track;
-      if (!t || t.is_local) continue;
-      tracks.push({
-        id: t.id,
-        title: t.name,
-        artist: t.artists?.map((a: { name: string }) => a.name).join(", ") ?? "Unknown",
-        thumbnail: t.album?.images?.[0]?.url ?? "",
-        duration: formatMs(t.duration_ms),
-        source: "spotify",
-        externalUrl: t.external_urls?.spotify,
-        // videoId resolved at download time via /api/search
-      });
-    }
-    nextUrl = data.next ?? null;
-  }
-
-  return { tracks, playlistName, totalCount: tracks.length, source: "spotify" };
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? `Server error ${res.status}`);
+  return data as ConversionResult;
 }
 
 // ── Fetch YouTube playlist ────────────────────────────────────
 export async function fetchYouTubePlaylist(url: string): Promise<ConversionResult> {
-  const match = url.match(/[?&]list=([A-Za-z0-9_-]+)/);
-  const playlistId = match?.[1];
-
-  if (!YOUTUBE_API_KEY) {
-    throw new Error(
-      "YouTube API key not set. Add VITE_YOUTUBE_API_KEY to your .env file, then restart the server."
-    );
-  }
-  if (!playlistId) {
-    throw new Error("Invalid YouTube playlist URL. Make sure it contains ?list=...");
-  }
-
-  const tracks: Track[] = [];
-  let pageToken: string | undefined;
-  let playlistName = "YouTube Playlist";
-
-  const metaRes = await fetch(
-    `https://www.googleapis.com/youtube/v3/playlists?part=snippet&id=${playlistId}&key=${YOUTUBE_API_KEY}`
-  );
-  if (!metaRes.ok) throw new Error(`YouTube API error: ${metaRes.status}`);
-  const meta = await metaRes.json();
-  if (meta.error) throw new Error(`YouTube API: ${meta.error.message}`);
-  playlistName = meta.items?.[0]?.snippet?.title ?? playlistName;
-
-  // Paginate — no limit
-  do {
-    const pageParam = pageToken ? `&pageToken=${pageToken}` : "";
-    const res = await fetch(
-      `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${playlistId}&maxResults=50&key=${YOUTUBE_API_KEY}${pageParam}`
-    );
-    if (!res.ok) throw new Error(`YouTube API error while paginating: ${res.status}`);
-    const data = await res.json();
-    if (data.error) throw new Error(`YouTube API: ${data.error.message}`);
-
-    for (const item of data.items ?? []) {
-      const s = item.snippet;
-      const videoId = s?.resourceId?.videoId;
-      if (!videoId) continue;
-      tracks.push({
-        id: videoId,
-        title: s.title,
-        artist: s.videoOwnerChannelTitle ?? "Unknown",
-        thumbnail: s.thumbnails?.medium?.url ?? s.thumbnails?.default?.url ?? "",
-        source: "youtube",
-        externalUrl: `https://www.youtube.com/watch?v=${videoId}`,
-        videoId, // Already have it for YouTube tracks
-      });
-    }
-    pageToken = data.nextPageToken;
-  } while (pageToken);
-
-  return { tracks, playlistName, totalCount: tracks.length, source: "youtube" };
+  const res = await fetch(`${BACKEND}/api/playlist?url=${encodeURIComponent(url)}`, {
+    signal: AbortSignal.timeout(60_000),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? `Server error ${res.status}`);
+  return data as ConversionResult;
 }
 
 // ── Orchestrator ─────────────────────────────────────────────
 export async function convertPlaylist(url: string): Promise<ConversionResult> {
-  const backend = await isBackendRunning();
-  if (!backend) {
-    throw new Error(
-      "Backend server is not running. Start it with: npm run dev:full\n(or run 'npm run server' in a separate terminal)"
-    );
-  }
-
   const isSpotify = url.includes("spotify.com");
   const isYoutube = url.includes("youtube.com") || url.includes("youtu.be");
 
-  if (isSpotify) return fetchSpotifyPlaylist(url);
-  if (isYoutube) return fetchYouTubePlaylist(url);
+  if (!isSpotify && !isYoutube) {
+    throw new Error("Unsupported URL. Please provide a valid Spotify or YouTube playlist URL.");
+  }
 
-  throw new Error("Unsupported URL. Please provide a valid Spotify or YouTube playlist URL.");
+  try {
+    if (isSpotify) return await fetchSpotifyPlaylist(url);
+    return await fetchYouTubePlaylist(url);
+  } catch (err) {
+    // Surface a helpful message if the backend simply isn't running
+    if (err instanceof TypeError && err.message.toLowerCase().includes("fetch")) {
+      throw new Error(
+        "Backend server is not running. Start it with: npm run dev:full\n(or run 'npm run server' in a separate terminal)"
+      );
+    }
+    if (err instanceof DOMException && err.name === "TimeoutError") {
+      throw new Error("Request timed out. The playlist may be very large or the service is slow — please try again.");
+    }
+    throw err;
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────

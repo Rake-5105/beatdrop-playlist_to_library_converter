@@ -103,7 +103,7 @@ SPOTIFY_CLIENT_SECRET=your_spotify_client_secret_here
 # Prevents yt-dlp from being blocked as a bot.
 # Set to the browser you are logged into YouTube with.
 # Options: firefox | chrome | edge | brave | chromium | safari
-YOUTUBE_COOKIES_BROWSER=firefox
+YOUTUBE_COOKIES_BROWSER=any_browser
 ```
 
 > **Note:** The Spotify API is used for **playlist metadata only** (track names & artists). All audio is sourced from YouTube. The YouTube Data API has a free quota of 10,000 units/day — each playlist page costs ~1 unit.

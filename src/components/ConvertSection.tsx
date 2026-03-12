@@ -43,6 +43,18 @@ export const ConvertSection = ({ onConvert, isLoading = false }: ConvertSectionP
       return;
     }
 
+    // Detect single YouTube video (no list= param) vs playlist
+    if (isYoutube && !url.includes("list=")) {
+      setError("That looks like a single YouTube video. Please paste a playlist URL — it should contain 'list=' in the link.");
+      return;
+    }
+
+    // Detect single Spotify track vs playlist
+    if (isSpotify && !url.includes("/playlist/")) {
+      setError("That looks like a single Spotify track or album. Please paste a Spotify playlist URL — it should contain '/playlist/' in the link.");
+      return;
+    }
+
     if (isSpotifyFirst && !isSpotify) {
       setError("You selected Spotify→YouTube but pasted a YouTube URL. Swap the direction or paste a Spotify link.");
       return;
