@@ -82,31 +82,35 @@ Then fill in your credentials in `.env` (see [Environment Variables](#environmen
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and set the following values:
+Copy `.env.example` to `.env.local` and set the following values:
 
 ```dotenv
-# ── Spotify Developer Credentials ──────────────────────────────
+# Frontend API base URL for deployed frontend builds only (Netlify)
+# This is not a secret.
+# VITE_API_BASE_URL=https://your-backend.onrender.com
+
+# ── Server-side Spotify credentials only ────────────────────────
 # https://developer.spotify.com/dashboard → Create App
-# Redirect URI: http://localhost:3001  (required by Spotify form, not used by this app)
-VITE_SPOTIFY_CLIENT_ID=your_spotify_client_id_here
-VITE_SPOTIFY_CLIENT_SECRET=your_spotify_client_secret_here
-
-# ── YouTube Data API v3 ─────────────────────────────────────────
-# https://console.cloud.google.com → Enable YouTube Data API v3 → Create API Key
-VITE_YOUTUBE_API_KEY=your_youtube_api_key_here
-
-# ── Server-side Spotify credentials (never exposed to browser) ──
+# Redirect URI: http://localhost:3001 (required by Spotify form, not used by this app)
 SPOTIFY_CLIENT_ID=your_spotify_client_id_here
 SPOTIFY_CLIENT_SECRET=your_spotify_client_secret_here
 
 # ── YouTube download cookies ────────────────────────────────────
-# Prevents yt-dlp from being blocked as a bot.
-# Set to the browser you are logged into YouTube with.
-# Options: firefox | chrome | edge | brave | chromium | safari
-YOUTUBE_COOKIES_BROWSER=any_browser
+# Optional. Only needed if yt-dlp must use your logged-in browser session.
+# Options: firefox | chrome | edge | brave | chromium | safari | opera | vivaldi | whale
+# YOUTUBE_COOKIES_BROWSER=edge
+
+# Deployed backend CORS allowlist
+# Set on Render for the backend service
+# FRONTEND_URL=https://your-site.netlify.app
+# FRONTEND_ORIGINS=https://your-site.netlify.app,https://deploy-preview-1--your-site.netlify.app
 ```
 
-> **Note:** The Spotify API is used for **playlist metadata only** (track names & artists). All audio is sourced from YouTube. The YouTube Data API has a free quota of 10,000 units/day — each playlist page costs ~1 unit.
+> **Important:** Do not commit `.env.local`, and do not create `VITE_*` secrets for this project. `VITE_*` variables are intended for browser code and may be exposed in frontend builds.
+
+> **Netlify note:** This repo builds a static frontend on Netlify, but the Express backend must be hosted separately. Only configure server-side secrets on the backend host, not as frontend `VITE_*` variables.
+
+> **Render + Netlify:** `localhost` never works after deployment. In the deployed browser, `localhost` means the visitor's own machine, not your Render server. Set `VITE_API_BASE_URL` in Netlify to your public Render backend URL, and set `FRONTEND_URL` or `FRONTEND_ORIGINS` in Render so CORS allows the Netlify origin.
 
 ---
 

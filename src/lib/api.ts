@@ -1,10 +1,8 @@
 // ============================================================
 // API SERVICE LAYER
 //
-// Set your credentials in a .env file (copy .env.example):
-//   VITE_SPOTIFY_CLIENT_ID=your_client_id
-//   VITE_SPOTIFY_CLIENT_SECRET=your_client_secret
-//   VITE_YOUTUBE_API_KEY=your_youtube_api_key  (optional)
+// Backend credentials live in .env.local (copy .env.example).
+// Do not put secrets in VITE_* variables.
 //
 // Start BOTH servers:  npm run dev:full
 // ============================================================
@@ -29,7 +27,21 @@ export interface ConversionResult {
   isDemo?: boolean;
 }
 
-const BACKEND = "http://localhost:3001";
+const RAW_BACKEND = import.meta.env.VITE_API_BASE_URL?.trim();
+const IS_LOCALHOST =
+  typeof window !== "undefined" && /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
+const BACKEND = RAW_BACKEND
+  ? RAW_BACKEND.replace(/\/+$/, "")
+  : IS_LOCALHOST
+    ? "http://localhost:3001"
+    : "";
+
+function getBackendBaseUrl(): string {
+  if (BACKEND) return BACKEND;
+  throw new Error(
+    "Frontend backend URL is not configured. Set VITE_API_BASE_URL in Netlify to your Render backend URL."
+  );
+}
 
 // ── Backend health check (cached 10 s so it never blocks twice) ──
 let _backendOk: boolean | null = null;
@@ -38,7 +50,7 @@ export async function isBackendRunning(): Promise<boolean> {
   const now = Date.now();
   if (_backendOk !== null && now - _backendCheckedAt < 10_000) return _backendOk;
   try {
-    const res = await fetch(`${BACKEND}/api/health`, { signal: AbortSignal.timeout(3000) });
+    const res = await fetch(`${getBackendBaseUrl()}/api/health`, { signal: AbortSignal.timeout(3000) });
     _backendOk = res.ok;
   } catch {
     _backendOk = false;
@@ -51,7 +63,7 @@ export async function isBackendRunning(): Promise<boolean> {
 export async function searchYouTube(query: string): Promise<string | null> {
   try {
     const res = await fetch(
-      `${BACKEND}/api/search?q=${encodeURIComponent(query)}`
+      `${getBackendBaseUrl()}/api/search?q=${encodeURIComponent(query)}`
     );
     const data = await res.json();
     return data.videos?.[0]?.id ?? null;
@@ -62,7 +74,8 @@ export async function searchYouTube(query: string): Promise<string | null> {
 
 // ── Download a single track (real audio via backend) ─────────
 export function getDownloadUrl(videoId: string, format: string, title: string, quality = "best"): string {
-  return `${BACKEND}/api/download?videoId=${encodeURIComponent(videoId)}&format=${encodeURIComponent(format)}&quality=${encodeURIComponent(quality)}&title=${encodeURIComponent(title)}`;
+  const backend = getBackendBaseUrl();
+  return `${backend}/api/download?videoId=${encodeURIComponent(videoId)}&format=${encodeURIComponent(format)}&quality=${encodeURIComponent(quality)}&title=${encodeURIComponent(title)}`;
 }
 
 export async function downloadTrack(
@@ -166,7 +179,8 @@ export async function downloadAllTracks(
   onProgress(0, resolved.length);
   onStatusMessage?.(`Starting download of ${resolved.length} tracks…`);
 
-  const startRes = await fetch(`${BACKEND}/api/download-zip`, {
+  const backend = getBackendBaseUrl();
+  const startRes = await fetch(`${backend}/api/download-zip`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ tracks: resolved, format, quality, playlistName }),
@@ -179,7 +193,7 @@ export async function downloadAllTracks(
 
   // Phase 2: SSE progress — bar goes 0 → 100% over actual downloads
   await new Promise<void>((resolve, reject) => {
-    const evtSource = new EventSource(`${BACKEND}/api/progress/${jobId}`);
+    const evtSource = new EventSource(`${backend}/api/progress/${jobId}`);
 
     evtSource.onmessage = async (e) => {
       let data: { type: string; done?: number; total?: number; track?: string; message?: string };
@@ -199,7 +213,7 @@ export async function downloadAllTracks(
         onStatusMessage?.("Preparing download…");
 
         try {
-          const fileRes = await fetch(`${BACKEND}/api/download-zip/file/${jobId}`);
+          const fileRes = await fetch(`${backend}/api/download-zip/file/${jobId}`);
           if (!fileRes.ok) throw new Error("ZIP file not available");
           const blob = await fileRes.blob();
           const blobUrl = URL.createObjectURL(blob);
@@ -231,7 +245,7 @@ export async function downloadAllTracks(
 
 // ── Fetch Spotify playlist ────────────────────────────────────
 export async function fetchSpotifyPlaylist(url: string): Promise<ConversionResult> {
-  const res = await fetch(`${BACKEND}/api/playlist?url=${encodeURIComponent(url)}`, {
+  const res = await fetch(`${getBackendBaseUrl()}/api/playlist?url=${encodeURIComponent(url)}`, {
     signal: AbortSignal.timeout(60_000),
   });
   const data = await res.json();
@@ -241,7 +255,7 @@ export async function fetchSpotifyPlaylist(url: string): Promise<ConversionResul
 
 // ── Fetch YouTube playlist ────────────────────────────────────
 export async function fetchYouTubePlaylist(url: string): Promise<ConversionResult> {
-  const res = await fetch(`${BACKEND}/api/playlist?url=${encodeURIComponent(url)}`, {
+  const res = await fetch(`${getBackendBaseUrl()}/api/playlist?url=${encodeURIComponent(url)}`, {
     signal: AbortSignal.timeout(60_000),
   });
   const data = await res.json();

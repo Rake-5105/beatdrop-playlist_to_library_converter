@@ -17,6 +17,13 @@ const ffmpegPath = require("ffmpeg-static");
 
 const app = express();
 const PORT = 3001;
+const CONFIGURED_FRONTEND_ORIGINS = [
+  process.env.FRONTEND_URL,
+  process.env.NETLIFY_URL,
+  ...(process.env.FRONTEND_ORIGINS ?? "").split(","),
+]
+  .map((value) => value?.trim())
+  .filter(Boolean);
 
 // ── Spotify token cache (declared here so all routes can access it) ──
 let _cachedSpotifyToken = null;
@@ -52,7 +59,12 @@ async function ensureYtDlp() {
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || /^http:\/\/localhost(:\d+)?$/.test(origin)) {
+    if (
+      !origin ||
+      /^http:\/\/localhost(:\d+)?$/.test(origin) ||
+      /^http:\/\/127\.0\.0\.1(:\d+)?$/.test(origin) ||
+      CONFIGURED_FRONTEND_ORIGINS.includes(origin)
+    ) {
       callback(null, true);
     } else {
       callback(new Error("Not allowed by CORS"));
