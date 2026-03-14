@@ -60,12 +60,34 @@ async function ensureYtDlp() {
     console.log("⬇️  Downloading yt-dlp binary (one-time)...");
 
     const latestReleaseUrl = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${ytDlpBinaryName}`;
-    await YTDlpWrap.downloadFile(latestReleaseUrl, ytDlpBinaryPath);
+    const tempBinaryPath = `${ytDlpBinaryPath}.download`;
+    try {
+      if (fs.existsSync(tempBinaryPath)) fs.unlinkSync(tempBinaryPath);
+    } catch {}
+
+    await YTDlpWrap.downloadFile(latestReleaseUrl, tempBinaryPath);
     if (process.platform !== "win32") {
-      fs.chmodSync(ytDlpBinaryPath, 0o755);
+      fs.chmodSync(tempBinaryPath, 0o755);
     }
 
-    const version = await ytDlpWrap.getVersion();
+    fs.renameSync(tempBinaryPath, ytDlpBinaryPath);
+
+    let version;
+    let lastError;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        version = await ytDlpWrap.getVersion();
+        break;
+      } catch (error) {
+        lastError = error;
+        if (error?.code !== "ETXTBSY" || attempt === 4) {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+    }
+
+    if (!version && lastError) throw lastError;
     console.log(`✅  yt-dlp downloaded (${version})`);
   }
 }
