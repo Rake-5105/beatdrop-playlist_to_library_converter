@@ -421,6 +421,7 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
 
   const runOnce = (args, label) =>
     new Promise((resolve) => {
+      console.log(`[dl ${index}] Running ${label}: ${ytDlpBinaryPath} ${args.slice(0, 5).join(" ")} ...`);
       const proc = spawn(ytDlpBinaryPath, args);
       let outBuf = "";
       let errBuf = "";
@@ -438,11 +439,12 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
       proc.on("close", (code) => {
         clearTimeout(killTimer);
         if (code === 0) {
-          console.log(`[dl ${index}] ${label} OK`);
+          console.log(`[dl ${index}] ${label} exit 0 - checking output...`);
+          if (outBuf) console.log(`[dl ${index}] stdout: ${outBuf.slice(0, 200)}`);
           resolve({ ok: true, err: "", out: outBuf });
         } else {
           const msg = errBuf.slice(-600) || `exit code ${code}`;
-          console.error(`[dl ${index}] ${label} failed: ${msg}`);
+          console.error(`[dl ${index}] ${label} exit ${code}: ${msg}`);
           resolve({ ok: false, err: msg, out: outBuf });
         }
       });
@@ -454,12 +456,14 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
       const tmpName = path.basename(tmpBase);
       const tryFind = (attempt = 0) => {
         try {
-          const allFiles = fs.readdirSync(tmpDir).filter((f) => f.startsWith(tmpName));
-          if (allFiles.length > 0) {
-            console.log(`[dl ${index}] Found temp files: ${allFiles.join(", ")}`);
+          const allFiles = fs.readdirSync(tmpDir);
+          const matches = allFiles.filter((f) => f.startsWith(tmpName));
+          console.log(`[dl ${index}] Attempt ${attempt + 1}/12: Looking for ${tmpName}* in ${tmpDir} — found ${matches.length} files`);
+          if (matches.length > 0) {
+            console.log(`[dl ${index}]   Candidates: ${matches.join(", ")}`);
           }
 
-          const candidates = allFiles
+          const candidates = matches
             .filter((f) => !f.endsWith(".part") && !f.endsWith(".ytdl"))
             .map((f) => path.join(tmpDir, f));
 
@@ -467,22 +471,29 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
             try {
               const stats = fs.statSync(p);
               const size = stats.size;
+              console.log(`[dl ${index}]   stat ${path.basename(p)}: ${size} bytes`);
               if (size > 0) {
-                console.log(`[dl ${index}] Valid file: ${path.basename(p)} (${size} bytes)`);
                 return true;
               }
             } catch (e) {
-              console.warn(`[dl ${index}] Could not stat: ${p} - ${e.message}`);
+              console.warn(`[dl ${index}]   stat fail ${path.basename(p)}: ${e.message}`);
             }
             return false;
           });
 
           if (existing.length > 0) {
-            console.log(`[dl ${index}] Using: ${existing[0]}`);
+            console.log(`[dl ${index}] ✅  Using: ${path.basename(existing[0])}`);
             return resolve(existing[0]);
           }
           if (attempt >= 12) {
-            console.warn(`[dl ${index}] Gave up after 12 retries looking for: ${tmpBase}*`);
+            console.warn(`[dl ${index}] ❌  Gave up after 12 retries for ${tmpName}*`);
+            // List what files ARE in tmpDir for debugging
+            try {
+              const allInDir = fs.readdirSync(tmpDir).slice(0, 20);
+              console.warn(`[dl ${index}]   Files in ${tmpDir}: ${allInDir.join(", ")}`);
+            } catch (e) {
+              console.warn(`[dl ${index}]   Could not list directory: ${e.message}`);
+            }
             return resolve(null);
           }
 
@@ -503,14 +514,18 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
   ];
   const result = await runOnce(bestaudioArgs, "bestaudio");
   if (!result.ok) {
-    console.error(`[dl ${index}] bestaudio failed: ${result.err}`);
+    console.error(`[dl ${index}] ❌  bestaudio failed: ${result.err}`);
     return null;
   }
 
+  console.log(`[dl ${index}] bestaudio succeeded, now looking for output file...`);
   const output = await findOutput();
-  if (output) return output;
+  if (output) {
+    console.log(`[dl ${index}] ✅  Download complete: ${path.basename(output)}`);
+    return output;
+  }
 
-  console.error(`[dl ${index}] No output file found after successful exit`);
+  console.error(`[dl ${index}] ❌  No output file found after successful exit`);
   return null;
 }
 
@@ -558,37 +573,70 @@ async function runDownloadJob(jobId, tracks, codec, audioQuality) {
   // Build the ZIP file
   broadcast(jobId, { type: "zipping", done: job.done, total: job.total });
   const zipPath = path.join(os.tmpdir(), `sss-zip-${jobId}.zip`);
+  console.log(`[job ${jobId.slice(0,6)}] Creating ZIP: ${zipPath}`);
+  
   const output = fs.createWriteStream(zipPath);
   const archive = archiver("zip", { zlib: { level: 0 } });
   archive.pipe(output);
-  archive.on("error", (err) => console.error("[archiver]", err.message));
+  
+  archive.on("error", (err) => console.error(`[job ${jobId.slice(0,6)}] archiver error: ${err.message}`));
+  output.on("error", (err) => console.error(`[job ${jobId.slice(0,6)}] output stream error: ${err.message}`));
+  
   let addedCount = 0;
   for (let i = 0; i < tmpFiles.length; i++) {
     const entry = tmpFiles[i];
-    if (!entry) continue;
+    if (!entry) {
+      console.log(`[job ${jobId.slice(0,6)}] Track ${i + 1}: skipped (null entry)`);
+      continue;
+    }
     try {
-      if (!fs.existsSync(entry.tmpPath)) {
-        console.warn(`[job ${jobId.slice(0,6)}] ⚠️  tmp file missing: ${entry.tmpPath}`);
+      const exists = fs.existsSync(entry.tmpPath);
+      if (!exists) {
+        console.warn(`[job ${jobId.slice(0,6)}] Track ${i + 1}: ⚠️  tmp file missing: ${entry.tmpPath}`);
         continue;
       }
+      const stats = fs.statSync(entry.tmpPath);
+      const size = stats.size;
+      console.log(`[job ${jobId.slice(0,6)}] Track ${i + 1}: found ${path.basename(entry.tmpPath)} (${size} bytes)`);
+      
       const actualExt = path.extname(entry.tmpPath).slice(1) || codec;
-      archive.file(entry.tmpPath, { name: `${String(i + 1).padStart(2, "0")} - ${entry.safeTitle}.${actualExt}` });
+      const zipName = `${String(i + 1).padStart(2, "0")} - ${entry.safeTitle}.${actualExt}`;
+      console.log(`[job ${jobId.slice(0,6)}] Track ${i + 1}: adding to ZIP as "${zipName}"`);
+      archive.file(entry.tmpPath, { name: zipName });
       addedCount++;
     } catch (e) {
-      console.warn(`[job ${jobId.slice(0,6)}] ⚠️  could not add to ZIP: ${e.message}`);
+      console.warn(`[job ${jobId.slice(0,6)}] Track ${i + 1}: ⚠️  could not add to ZIP: ${e.message}`);
     }
   }
-  console.log(`[job ${jobId.slice(0,6)}] ZIP: adding ${addedCount}/${tmpFiles.length} tracks`);
-  if (addedCount === 0) throw new Error("All track downloads failed — ZIP would be empty");
+  console.log(`[job ${jobId.slice(0,6)}] ZIP: ${addedCount}/${tmpFiles.length} tracks added`);
+  
+  if (addedCount === 0) {
+    await archive.abort();
+    return broadcast(jobId, { type: "error", message: "All track downloads failed — ZIP would be empty" });
+  }
+  
   // Set up close listener BEFORE finalize to avoid race condition (0-byte ZIP)
   const zipClosePromise = new Promise((resolve, reject) => {
-    output.on("close", resolve);
+    output.on("close", () => {
+      const stats = fs.statSync(zipPath);
+      console.log(`[job ${jobId.slice(0,6)}] ZIP closed, final size: ${stats.size} bytes`);
+      resolve();
+    });
     output.on("error", reject);
     archive.on("error", reject);
   });
+  
+  console.log(`[job ${jobId.slice(0,6)}] Finalizing archive...`);
   await archive.finalize();
   await zipClosePromise;
-  for (const e of tmpFiles) { if (e?.tmpPath) fs.unlink(e.tmpPath, () => {}); }
+  
+  for (const e of tmpFiles) {
+    if (e?.tmpPath) {
+      fs.unlink(e.tmpPath, (err) => {
+        if (err) console.warn(`[job ${jobId.slice(0,6)}] Could not delete temp file: ${e.tmpPath}`);
+      });
+    }
+  }
 
   job.zipPath = zipPath;
   job.status = "done";
@@ -596,7 +644,7 @@ async function runDownloadJob(jobId, tracks, codec, audioQuality) {
   // close SSE connections
   job.clients.forEach((c) => c.end());
   job.clients = [];
-  console.log(`[job ${jobId.slice(0,6)}] done → ${job.safePlaylist}.zip`);
+  console.log(`[job ${jobId.slice(0,6)}] ✅  done → ${job.safePlaylist}.zip (${(fs.statSync(zipPath).size / 1024 / 1024).toFixed(2)} MB)`);
 
   // Auto-cleanup after 10 min
   setTimeout(() => {
