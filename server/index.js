@@ -403,33 +403,46 @@ function broadcast(jobId, data) {
   job.clients.forEach((c) => c.write(msg));
 }
 
-function downloadToTempFile(videoId, codec, audioQuality, index) {
+async function downloadToTempFile(videoId, codec, audioQuality, index) {
   const tmpBase = path.join(os.tmpdir(), `sss-${Date.now()}-${index}`);
-  const args = [
-    `https://www.youtube.com/watch?v=${videoId}`,
-    "-x", "--audio-format", codec, "--audio-quality", audioQuality,
-    "--ffmpeg-location", ffmpegPath,
+  const sourceUrl = `https://www.youtube.com/watch?v=${videoId}`;
+
+  const baseArgs = [
+    sourceUrl,
+    "--force-ipv4",
+    "--socket-timeout", "30",
+    "--retries", "8",
+    "--fragment-retries", "8",
+    "--extractor-args", "youtube:player_client=android,web",
     ...cookiesArg(),
     "-o", `${tmpBase}.%(ext)s`,
     "--no-playlist", "--no-warnings", "--quiet",
   ];
-  return new Promise((resolve) => {
-    const proc = spawn(ytDlpBinaryPath, args);
-    let errBuf = "";
-    // Kill if still running after 10 min
-    const killTimer = setTimeout(() => {
-      proc.kill("SIGTERM");
-      console.warn(`[dl ${index}] 10-min timeout, killed`);
-    }, 10 * 60 * 1000);
-    proc.stderr.on("data", (chunk) => (errBuf += chunk.toString()));
-    proc.on("error", (err) => { clearTimeout(killTimer); console.error(`[dl ${index}] spawn:`, err.message); resolve(null); });
-    proc.on("close", (code) => {
-      clearTimeout(killTimer);
-      if (code !== 0) { console.error(`[dl ${index}] exit ${code}:`, errBuf.slice(-400)); resolve(null); return; }
+
+  const runOnce = (args, label) =>
+    new Promise((resolve) => {
+      const proc = spawn(ytDlpBinaryPath, args);
+      let errBuf = "";
+      const killTimer = setTimeout(() => {
+        proc.kill("SIGTERM");
+        console.warn(`[dl ${index}] ${label} timeout, killed`);
+      }, 10 * 60 * 1000);
+      proc.stderr.on("data", (chunk) => (errBuf += chunk.toString()));
+      proc.on("error", (err) => {
+        clearTimeout(killTimer);
+        resolve({ ok: false, err: err.message });
+      });
+      proc.on("close", (code) => {
+        clearTimeout(killTimer);
+        resolve({ ok: code === 0, err: code === 0 ? "" : errBuf.slice(-600) });
+      });
+    });
+
+  const findOutput = () =>
+    new Promise((resolve) => {
       const tmpDir = path.dirname(tmpBase);
       const tmpName = path.basename(tmpBase);
-
-      const tryFindOutput = (attempt = 0) => {
+      const tryFind = (attempt = 0) => {
         try {
           const candidates = fs.readdirSync(tmpDir)
             .filter((f) => f.startsWith(tmpName) && !f.endsWith(".part") && !f.endsWith(".ytdl"))
@@ -443,26 +456,36 @@ function downloadToTempFile(videoId, codec, audioQuality, index) {
             }
           });
 
-          if (existing.length > 0) {
-            resolve(existing[0]);
-            return;
-          }
-
-          if (attempt >= 12) {
-            console.warn(`[dl ${index}] no completed output file found for base: ${tmpBase}`);
-            resolve(null);
-            return;
-          }
-
-          setTimeout(() => tryFindOutput(attempt + 1), 250);
+          if (existing.length > 0) return resolve(existing[0]);
+          if (attempt >= 12) return resolve(null);
+          setTimeout(() => tryFind(attempt + 1), 250);
         } catch {
           resolve(null);
         }
       };
-
-      tryFindOutput();
+      tryFind();
     });
-  });
+
+  const transcodeArgs = [
+    "-x", "--audio-format", codec, "--audio-quality", audioQuality,
+    "--ffmpeg-location", ffmpegPath,
+    ...baseArgs,
+  ];
+  const primary = await runOnce(transcodeArgs, "transcode");
+  const primaryOutput = await findOutput();
+  if (primary.ok && primaryOutput) return primaryOutput;
+
+  console.warn(`[dl ${index}] primary failed, trying bestaudio fallback: ${primary.err || "no output file"}`);
+  const fallbackArgs = [
+    "-f", "bestaudio/best",
+    ...baseArgs,
+  ];
+  const fallback = await runOnce(fallbackArgs, "fallback");
+  const fallbackOutput = await findOutput();
+  if (fallback.ok && fallbackOutput) return fallbackOutput;
+
+  console.error(`[dl ${index}] fallback failed: ${fallback.err || "no output file"}`);
+  return null;
 }
 
 async function runDownloadJob(jobId, tracks, codec, audioQuality) {
