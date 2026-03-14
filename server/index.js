@@ -33,7 +33,11 @@ let _cachedSpotifyTokenExpiresAt = 0;
 // Use platform-appropriate filename; on Linux Render the .exe won't exist but
 // ensureYtDlp() will download the correct binary on first startup.
 const ytDlpBinaryName = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
-const ytDlpBinaryPath = path.join(__dirname, ytDlpBinaryName);
+const ytDlpBinaryDir = process.platform === "win32"
+  ? __dirname
+  : path.join(os.tmpdir(), "sound-switch-studio-bin");
+fs.mkdirSync(ytDlpBinaryDir, { recursive: true });
+const ytDlpBinaryPath = process.env.YT_DLP_BINARY_PATH || path.join(ytDlpBinaryDir, ytDlpBinaryName);
 const ytDlpWrap = new YTDlpWrap(ytDlpBinaryPath);
 
 // Browser whose cookie store yt-dlp uses to bypass YouTube bot detection.
@@ -54,7 +58,13 @@ async function ensureYtDlp() {
     console.log(`✅  yt-dlp ready (${version})`);
   } catch {
     console.log("⬇️  Downloading yt-dlp binary (one-time)...");
-    await YTDlpWrap.downloadFromGithub(ytDlpBinaryPath);
+
+    const latestReleaseUrl = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${ytDlpBinaryName}`;
+    await YTDlpWrap.downloadFile(latestReleaseUrl, ytDlpBinaryPath);
+    if (process.platform !== "win32") {
+      fs.chmodSync(ytDlpBinaryPath, 0o755);
+    }
+
     const version = await ytDlpWrap.getVersion();
     console.log(`✅  yt-dlp downloaded (${version})`);
   }
@@ -584,6 +594,6 @@ ensureYtDlp()
     );
   })
   .catch((err) => {
-    console.error("❌  Failed to init yt-dlp:", err.message);
+    console.error("❌  Failed to init yt-dlp:", err?.message ?? err);
     process.exit(1);
   });
