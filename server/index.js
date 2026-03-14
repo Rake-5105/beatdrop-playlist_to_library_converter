@@ -416,25 +416,35 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
     "--extractor-args", "youtube:player_client=android,web",
     ...cookiesArg(),
     "-o", `${tmpBase}.%(ext)s`,
-    "--no-playlist", "--no-warnings", "--quiet",
+    "--no-playlist",
   ];
 
   const runOnce = (args, label) =>
     new Promise((resolve) => {
       const proc = spawn(ytDlpBinaryPath, args);
+      let outBuf = "";
       let errBuf = "";
       const killTimer = setTimeout(() => {
         proc.kill("SIGTERM");
-        console.warn(`[dl ${index}] ${label} timeout, killed`);
+        console.error(`[dl ${index}] ${label} timeout (10m), killed`);
       }, 10 * 60 * 1000);
+      proc.stdout.on("data", (chunk) => (outBuf += chunk.toString()));
       proc.stderr.on("data", (chunk) => (errBuf += chunk.toString()));
       proc.on("error", (err) => {
         clearTimeout(killTimer);
-        resolve({ ok: false, err: err.message });
+        console.error(`[dl ${index}] ${label} spawn error: ${err.message}`);
+        resolve({ ok: false, err: err.message, out: outBuf });
       });
       proc.on("close", (code) => {
         clearTimeout(killTimer);
-        resolve({ ok: code === 0, err: code === 0 ? "" : errBuf.slice(-600) });
+        if (code === 0) {
+          console.log(`[dl ${index}] ${label} OK`);
+          resolve({ ok: true, err: "", out: outBuf });
+        } else {
+          const msg = errBuf.slice(-600) || `exit code ${code}`;
+          console.error(`[dl ${index}] ${label} failed: ${msg}`);
+          resolve({ ok: false, err: msg, out: outBuf });
+        }
       });
     });
 
@@ -444,47 +454,63 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
       const tmpName = path.basename(tmpBase);
       const tryFind = (attempt = 0) => {
         try {
-          const candidates = fs.readdirSync(tmpDir)
-            .filter((f) => f.startsWith(tmpName) && !f.endsWith(".part") && !f.endsWith(".ytdl"))
+          const allFiles = fs.readdirSync(tmpDir).filter((f) => f.startsWith(tmpName));
+          if (allFiles.length > 0) {
+            console.log(`[dl ${index}] Found temp files: ${allFiles.join(", ")}`);
+          }
+
+          const candidates = allFiles
+            .filter((f) => !f.endsWith(".part") && !f.endsWith(".ytdl"))
             .map((f) => path.join(tmpDir, f));
 
           const existing = candidates.filter((p) => {
             try {
-              return fs.existsSync(p) && fs.statSync(p).isFile() && fs.statSync(p).size > 0;
-            } catch {
-              return false;
+              const stats = fs.statSync(p);
+              const size = stats.size;
+              if (size > 0) {
+                console.log(`[dl ${index}] Valid file: ${path.basename(p)} (${size} bytes)`);
+                return true;
+              }
+            } catch (e) {
+              console.warn(`[dl ${index}] Could not stat: ${p} - ${e.message}`);
             }
+            return false;
           });
 
-          if (existing.length > 0) return resolve(existing[0]);
-          if (attempt >= 12) return resolve(null);
+          if (existing.length > 0) {
+            console.log(`[dl ${index}] Using: ${existing[0]}`);
+            return resolve(existing[0]);
+          }
+          if (attempt >= 12) {
+            console.warn(`[dl ${index}] Gave up after 12 retries looking for: ${tmpBase}*`);
+            return resolve(null);
+          }
+
           setTimeout(() => tryFind(attempt + 1), 250);
-        } catch {
+        } catch (e) {
+          console.error(`[dl ${index}] Directory error: ${e.message}`);
           resolve(null);
         }
       };
       tryFind();
     });
 
-  const transcodeArgs = [
-    "-x", "--audio-format", codec, "--audio-quality", audioQuality,
-    "--ffmpeg-location", ffmpegPath,
-    ...baseArgs,
-  ];
-  const primary = await runOnce(transcodeArgs, "transcode");
-  const primaryOutput = await findOutput();
-  if (primary.ok && primaryOutput) return primaryOutput;
-
-  console.warn(`[dl ${index}] primary failed, trying bestaudio fallback: ${primary.err || "no output file"}`);
-  const fallbackArgs = [
+  const bestaudioArgs = [
     "-f", "bestaudio/best",
+    "-q",
+    "--no-warnings",
     ...baseArgs,
   ];
-  const fallback = await runOnce(fallbackArgs, "fallback");
-  const fallbackOutput = await findOutput();
-  if (fallback.ok && fallbackOutput) return fallbackOutput;
+  const result = await runOnce(bestaudioArgs, "bestaudio");
+  if (!result.ok) {
+    console.error(`[dl ${index}] bestaudio failed: ${result.err}`);
+    return null;
+  }
 
-  console.error(`[dl ${index}] fallback failed: ${fallback.err || "no output file"}`);
+  const output = await findOutput();
+  if (output) return output;
+
+  console.error(`[dl ${index}] No output file found after successful exit`);
   return null;
 }
 
