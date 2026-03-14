@@ -416,11 +416,11 @@ function downloadToTempFile(videoId, codec, audioQuality, index) {
   return new Promise((resolve) => {
     const proc = spawn(ytDlpBinaryPath, args);
     let errBuf = "";
-    // Kill if still running after 5 min
+    // Kill if still running after 10 min
     const killTimer = setTimeout(() => {
       proc.kill("SIGTERM");
-      console.warn(`[dl ${index}] 5-min timeout, killed`);
-    }, 5 * 60 * 1000);
+      console.warn(`[dl ${index}] 10-min timeout, killed`);
+    }, 10 * 60 * 1000);
     proc.stderr.on("data", (chunk) => (errBuf += chunk.toString()));
     proc.on("error", (err) => { clearTimeout(killTimer); console.error(`[dl ${index}] spawn:`, err.message); resolve(null); });
     proc.on("close", (code) => {
@@ -428,10 +428,39 @@ function downloadToTempFile(videoId, codec, audioQuality, index) {
       if (code !== 0) { console.error(`[dl ${index}] exit ${code}:`, errBuf.slice(-400)); resolve(null); return; }
       const tmpDir = path.dirname(tmpBase);
       const tmpName = path.basename(tmpBase);
-      try {
-        const match = fs.readdirSync(tmpDir).find((f) => f.startsWith(tmpName));
-        resolve(match ? path.join(tmpDir, match) : null);
-      } catch { resolve(null); }
+
+      const tryFindOutput = (attempt = 0) => {
+        try {
+          const candidates = fs.readdirSync(tmpDir)
+            .filter((f) => f.startsWith(tmpName) && !f.endsWith(".part") && !f.endsWith(".ytdl"))
+            .map((f) => path.join(tmpDir, f));
+
+          const existing = candidates.filter((p) => {
+            try {
+              return fs.existsSync(p) && fs.statSync(p).isFile() && fs.statSync(p).size > 0;
+            } catch {
+              return false;
+            }
+          });
+
+          if (existing.length > 0) {
+            resolve(existing[0]);
+            return;
+          }
+
+          if (attempt >= 12) {
+            console.warn(`[dl ${index}] no completed output file found for base: ${tmpBase}`);
+            resolve(null);
+            return;
+          }
+
+          setTimeout(() => tryFindOutput(attempt + 1), 250);
+        } catch {
+          resolve(null);
+        }
+      };
+
+      tryFindOutput();
     });
   });
 }
