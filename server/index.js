@@ -204,18 +204,15 @@ app.get("/api/playlist", async (req, res) => {
     // ── YouTube via yt-dlp (works with private/unlisted/any playlist) ──
     console.log(`[playlist] Fetching YouTube playlist via yt-dlp: ${url}`);
 
-    // Reject auto-generated mixes (RD...) — they're infinite and not real playlists
+    // Cap auto-generated mixes (RD...) at 100 tracks — they can be endless
     const listId = (url.match(/[?&]list=([A-Za-z0-9_-]+)/) ?? [])[1] ?? "";
-    if (/^(RD|RDAMPL|RDEM|RDCLAK)/.test(listId)) {
-      return res.status(400).json({
-        error: "YouTube auto-mix playlists are not supported. Please use a regular playlist that you created or saved.",
-      });
-    }
+    const isAutoMix = /^(RD|RDAMPL|RDEM|RDCLAK)/.test(listId);
 
     const ytdlpArgs = [
       "--flat-playlist",
       "--no-warnings",
       "--print", "%(playlist_title)s\t%(id)s\t%(title)s\t%(uploader)s\t%(channel)s",
+      ...(isAutoMix ? ["--playlist-end", "50"] : []),
       url,
     ];
 
@@ -478,10 +475,12 @@ async function runDownloadJob(jobId, tracks, codec, audioQuality) {
     const entry = tmpFiles[i];
     if (!entry) continue;
     const actualExt = path.extname(entry.tmpPath).slice(1) || codec;
-    archive.file(entry.tmpPath, { name: `${String(i + 1).padStart(2, "0")} - ${entry.safeTitle}.${actualExt}` });
+    archive.file(entry.tmpPath, { name: `${String(i + 1).padStart(2, "00")} - ${entry.safeTitle}.${actualExt}` });
   }
+  // Set up close listener BEFORE finalize to avoid race condition (0-byte ZIP)
+  const zipClosePromise = new Promise((r) => output.on("close", r));
   await archive.finalize();
-  await new Promise((r) => output.on("close", r));
+  await zipClosePromise;
   for (const e of tmpFiles) { if (e?.tmpPath) fs.unlink(e.tmpPath, () => {}); }
 
   job.zipPath = zipPath;

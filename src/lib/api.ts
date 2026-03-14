@@ -177,7 +177,7 @@ export async function downloadAllTracks(
 
   // Phase 2: start background job — progress bar resets to 0 and goes to 100%
   onProgress(0, resolved.length);
-  onStatusMessage?.(`Starting download of ${resolved.length} tracks…`);
+  onStatusMessage?.(`Starting download of ${resolved.length} tracks… (this may take 10–15 minutes)`);
 
   const backend = getBackendBaseUrl();
   const startRes = await fetch(`${backend}/api/download-zip`, {
