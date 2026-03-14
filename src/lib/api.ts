@@ -247,7 +247,7 @@ export async function downloadAllTracks(
 // ── Fetch Spotify playlist ────────────────────────────────────
 export async function fetchSpotifyPlaylist(url: string): Promise<ConversionResult> {
   const res = await fetch(`${getBackendBaseUrl()}/api/playlist?url=${encodeURIComponent(url)}`, {
-    signal: AbortSignal.timeout(60_000),
+    signal: AbortSignal.timeout(90_000),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? `Server error ${res.status}`);
@@ -257,7 +257,7 @@ export async function fetchSpotifyPlaylist(url: string): Promise<ConversionResul
 // ── Fetch YouTube playlist ────────────────────────────────────
 export async function fetchYouTubePlaylist(url: string): Promise<ConversionResult> {
   const res = await fetch(`${getBackendBaseUrl()}/api/playlist?url=${encodeURIComponent(url)}`, {
-    signal: AbortSignal.timeout(60_000),
+    signal: AbortSignal.timeout(180_000),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? `Server error ${res.status}`);

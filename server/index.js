@@ -274,7 +274,7 @@ app.get("/api/playlist", async (req, res) => {
         resolve({ playlistName, tracks });
       });
 
-      setTimeout(() => { proc.kill(); reject(new Error("yt-dlp timed out fetching playlist")); }, 60_000);
+      setTimeout(() => { proc.kill(); reject(new Error("yt-dlp timed out fetching playlist")); }, 180_000);
     });
 
     console.log(`[playlist] YouTube "${playlistName}" — ${tracks.length} tracks`);
