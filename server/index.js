@@ -439,6 +439,7 @@ function downloadToTempFile(videoId, codec, audioQuality, index) {
 async function runDownloadJob(jobId, tracks, codec, audioQuality) {
   const job = jobs.get(jobId);
   const tmpFiles = new Array(tracks.length).fill(null);
+  const jobStartTime = Date.now();
 
   for (let i = 0; i < tracks.length; i += ZIP_CONCURRENCY) {
     if (!jobs.has(jobId)) return; // cancelled
@@ -457,9 +458,21 @@ async function runDownloadJob(jobId, tracks, codec, audioQuality) {
         console.log(`[job ${jobId.slice(0,6)}] dl ${idx + 1}/${tracks.length} – ${safeTitle}`);
         const tmpPath = await downloadToTempFile(videoId, codec, audioQuality, `${jobId}-${idx}`);
         tmpFiles[idx] = tmpPath ? { tmpPath, safeTitle } : null;
+        if (!tmpPath) console.warn(`[job ${jobId.slice(0,6)}] ⚠️  download returned null for: ${safeTitle}`);
         job.done++;
         job.lastTrack = safeTitle;
-        broadcast(jobId, { type: "progress", done: job.done, total: job.total, track: safeTitle });
+
+        // ── Remaining time estimate ───────────────────────────
+        const elapsedSec = (Date.now() - jobStartTime) / 1000;
+        const avgPerTrack = elapsedSec / job.done;
+        const remainingSec = Math.round(avgPerTrack * (job.total - job.done));
+        const remainingText = remainingSec > 60
+          ? `~${Math.ceil(remainingSec / 60)} min remaining`
+          : remainingSec > 5
+            ? `~${remainingSec}s remaining`
+            : job.done < job.total ? "almost done" : "";
+
+        broadcast(jobId, { type: "progress", done: job.done, total: job.total, track: safeTitle, remainingText });
       })
     );
   }
@@ -471,14 +484,30 @@ async function runDownloadJob(jobId, tracks, codec, audioQuality) {
   const archive = archiver("zip", { zlib: { level: 0 } });
   archive.pipe(output);
   archive.on("error", (err) => console.error("[archiver]", err.message));
+  let addedCount = 0;
   for (let i = 0; i < tmpFiles.length; i++) {
     const entry = tmpFiles[i];
     if (!entry) continue;
-    const actualExt = path.extname(entry.tmpPath).slice(1) || codec;
-    archive.file(entry.tmpPath, { name: `${String(i + 1).padStart(2, "00")} - ${entry.safeTitle}.${actualExt}` });
+    try {
+      if (!fs.existsSync(entry.tmpPath)) {
+        console.warn(`[job ${jobId.slice(0,6)}] ⚠️  tmp file missing: ${entry.tmpPath}`);
+        continue;
+      }
+      const actualExt = path.extname(entry.tmpPath).slice(1) || codec;
+      archive.file(entry.tmpPath, { name: `${String(i + 1).padStart(2, "0")} - ${entry.safeTitle}.${actualExt}` });
+      addedCount++;
+    } catch (e) {
+      console.warn(`[job ${jobId.slice(0,6)}] ⚠️  could not add to ZIP: ${e.message}`);
+    }
   }
+  console.log(`[job ${jobId.slice(0,6)}] ZIP: adding ${addedCount}/${tmpFiles.length} tracks`);
+  if (addedCount === 0) throw new Error("All track downloads failed — ZIP would be empty");
   // Set up close listener BEFORE finalize to avoid race condition (0-byte ZIP)
-  const zipClosePromise = new Promise((r) => output.on("close", r));
+  const zipClosePromise = new Promise((resolve, reject) => {
+    output.on("close", resolve);
+    output.on("error", reject);
+    archive.on("error", reject);
+  });
   await archive.finalize();
   await zipClosePromise;
   for (const e of tmpFiles) { if (e?.tmpPath) fs.unlink(e.tmpPath, () => {}); }

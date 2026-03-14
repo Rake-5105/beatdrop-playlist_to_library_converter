@@ -196,12 +196,13 @@ export async function downloadAllTracks(
     const evtSource = new EventSource(`${backend}/api/progress/${jobId}`);
 
     evtSource.onmessage = async (e) => {
-      let data: { type: string; done?: number; total?: number; track?: string; message?: string };
+      let data: { type: string; done?: number; total?: number; track?: string; message?: string; remainingText?: string };
       try { data = JSON.parse(e.data); } catch { return; }
 
       if (data.type === "progress" && data.done != null && data.total != null) {
         onProgress(data.done, data.total);
-        onStatusMessage?.(`Downloading ${data.done}/${data.total}: ${data.track ?? ""}`);
+        const timeLabel = data.remainingText ? ` — ${data.remainingText}` : "";
+        onStatusMessage?.(`Downloading ${data.done}/${data.total}: ${data.track ?? ""}${timeLabel}`);
 
       } else if (data.type === "zipping") {
         onProgress(resolved.length - 1, resolved.length);
