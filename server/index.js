@@ -462,7 +462,6 @@ app.get("/api/download", (req, res) => {
     "-x",
     "--audio-format", codec,
     "--audio-quality", audioQuality,
-    "--ffmpeg-location", ffmpegPath,
     ...cookiesArg(),
     "-o", "-",
     "--no-playlist",
@@ -671,7 +670,6 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
     "-x",
     "--audio-format", codec,
     "--audio-quality", audioQuality,
-    "--ffmpeg-location", ffmpegPath,
     "-q",
     "--no-warnings",
     ...baseArgs,
@@ -686,7 +684,6 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
       "-x",
       "--audio-format", codec,
       "--audio-quality", audioQuality,
-      "--ffmpeg-location", ffmpegPath,
       "--no-warnings",
       // Drop extractor-args override — let yt-dlp pick the best client automatically
       sourceUrl,
