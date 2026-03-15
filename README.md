@@ -1,285 +1,817 @@
-# BeatDrop
+# Sound Switch Studio 🎵
 
-> **Spotify & YouTube Playlist → Local Audio Library Converter**
+Convert your Spotify and YouTube playlists to downloadable audio files.
 
-BeatDrop is a free, self-hosted, privacy-first tool that converts Spotify and YouTube playlists into a local audio library. Paste a playlist URL, choose your format, and download your music — no account, no ads, no data collection.
+**Copyright © 2026 Rakesh Kannan C K. All rights reserved.**
 
 ---
 
 ## Table of Contents
 
 - [Features](#features)
-- [Tech Stack](#tech-stack)
-- [Prerequisites](#prerequisites)
+- [System Requirements](#system-requirements)
 - [Installation](#installation)
-- [Environment Variables](#environment-variables)
-- [Running the App](#running-the-app)
-- [How It Works](#how-it-works)
-- [Supported Formats](#supported-formats)
-- [FAQ](#faq)
-- [Privacy Policy](#privacy-policy)
-- [Terms of Service](#terms-of-service)
-- [Legal Disclaimer](#legal-disclaimer)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [Localhost Testing](#localhost-testing)
+- [Troubleshooting](#troubleshooting)
+- [Known Issues & Limitations](#known-issues--limitations)
+- [API Reference](#api-reference)
+- [Architecture](#architecture)
+- [Development](#development)
+- [License](#license)
 
 ---
 
 ## Features
 
-- **Spotify & YouTube support** — Paste any public Spotify or YouTube playlist URL.
-- **Multiple audio formats** — Export as MP3, WAV, FLAC, M4A, or AAC.
-- **Unlimited playlist size** — No track limit; paginated API fetching handles playlists of any size.
-- **Drag-and-drop reordering** — Reorder tracks in the preview before downloading.
-- **Bulk or individual downloads** — Download all tracks as a ZIP or grab individual songs.
-- **Conversion history** — Last 50 conversions saved locally in your browser (never sent to a server).
-- **No account required** — No sign-up, no login, no database.
-- **Zero data collection** — No analytics, no tracking, no cookies.
-- **Dark / Light theme** — Full system-aware theme support.
+✅ **Spotify Integration**
+- Convert Spotify playlists to audio files
+- Automatic fallback to YouTube if Spotify audio unavailable
+- Full playlist metadata support
+
+✅ **YouTube Downloads**
+- Download audio from YouTube videos
+- Multiple audio format support (MP3, M4A, OPUS, etc.)
+- Adjustable quality (128 kbps - 320 kbps)
+
+✅ **Batch Processing**
+- Download entire playlists with one click
+- Parallel downloads (up to 6 concurrent)
+- Real-time progress tracking via Server-Sent Events (SSE)
+
+✅ **ZIP Creation**
+- Automatic ZIP archive generation
+- Browser download support
+- Preserves metadata
+
+✅ **Modern UI**
+- React + TypeScript frontend
+- Tailwind CSS styling
+- Real-time progress updates
+- Dark/Light theme toggle
 
 ---
 
-## Tech Stack
+## System Requirements
 
-| Layer | Technology |
-|---|---|
-| Frontend | React 18, TypeScript, Vite |
-| Styling | Tailwind CSS, shadcn/ui, Radix UI |
-| Backend | Node.js, Express 5 |
-| Audio | yt-dlp, ffmpeg-static, @distube/ytdl-core |
-| Spotify API | Client Credentials OAuth (metadata only) |
-| YouTube API | YouTube Data API v3 (metadata) |
-| Routing | React Router v6 |
-| State | TanStack Query v5 |
+### Minimum
 
----
+- **OS**: Windows 10+, macOS 10.14+, Linux (Ubuntu/Debian/CentOS)
+- **Node.js**: v16.0.0 or higher
+- **npm/Yarn**: Latest version
+- **RAM**: 2GB minimum
+- **Disk Space**: 500MB for dependencies + storage for downloads
 
-## Prerequisites
+### Recommended
 
-- **Node.js** v18 or higher — [Download](https://nodejs.org)
-- **npm** v9 or higher (bundled with Node.js)
-- **yt-dlp** binary placed at `server/yt-dlp.exe` (Windows) or `server/yt-dlp` (Linux/macOS) — [Download](https://github.com/yt-dlp/yt-dlp/releases)
-- A **Spotify Developer** account — [dashboard.spotify.com](https://developer.spotify.com/dashboard)
-- A **Google Cloud** account with the **YouTube Data API v3** enabled — [console.cloud.google.com](https://console.cloud.google.com)
+- **OS**: Windows 11, macOS 12+, Ubuntu 20.04+
+- **Node.js**: v18.0.0 or higher
+- **RAM**: 4GB+
+- **Disk Space**: 2GB+
+- **Internet**: Stable connection (>5 Mbps)
+
+### Required External Tools
+
+| Tool | Purpose | Install |
+|------|---------|---------|
+| **yt-dlp** | YouTube/audio downloader | [Installation Guide](#yt-dlp-installation) |
+| **FFmpeg** | Audio codec/format conversion | [Installation Guide](#ffmpeg-installation) |
+| **Git** | Version control (development) | https://git-scm.com/ |
 
 ---
 
 ## Installation
 
-```sh
-# 1. Clone the repository
-git clone <YOUR_GIT_URL>
+### 1. Prerequisites Installation
+
+#### yt-dlp Installation
+
+**Windows (Chocolatey):**
+```powershell
+choco install yt-dlp
+```
+
+**Windows (Manual):**
+1. Download from: https://github.com/yt-dlp/yt-dlp/releases
+2. Extract to: `C:\Program Files\yt-dlp\`
+3. Add to PATH
+
+**macOS:**
+```bash
+brew install yt-dlp
+```
+
+**Linux (Ubuntu/Debian):**
+```bash
+sudo apt-get update
+sudo apt-get install yt-dlp
+```
+
+**Verify installation:**
+```bash
+yt-dlp --version
+```
+
+#### FFmpeg Installation
+
+**Windows (Chocolatey):**
+```powershell
+choco install ffmpeg
+```
+
+**Windows (Manual):**
+1. Download from: https://www.gyan.dev/ffmpeg/builds/
+2. Extract to: `C:\Program Files\ffmpeg\`
+3. Add `C:\Program Files\ffmpeg\bin` to PATH
+
+**macOS:**
+```bash
+brew install ffmpeg
+```
+
+**Linux (Ubuntu/Debian):**
+```bash
+sudo apt-get install ffmpeg
+```
+
+**Verify installation:**
+```bash
+ffmpeg -version
+```
+
+### 2. Clone Repository
+
+```bash
+git clone https://github.com/Rake-5105/sound-switch-studio.git
 cd sound-switch-studio
+```
 
-# 2. Install dependencies
+### 3. Install Node Dependencies
+
+```bash
 npm install
-
-# 3. Copy the environment template
-cp .env.example .env
+# or
+yarn install
+# or
+bun install
 ```
 
-Then fill in your credentials in `.env` (see [Environment Variables](#environment-variables)).
+**Key Dependencies:**
+- **express** - Web server framework
+- **yt-dlp-wrap** - YouTube downloading wrapper
+- **ffmpeg-static** - FFmpeg binary for Node
+- **archiver** - ZIP file creation
+- **react** - Frontend UI framework
+- **vite** - Build tool
+- **axios** - HTTP client
+- **tailwindcss** - CSS framework
 
----
+### 4. Environment Setup
 
-## Environment Variables
+Create `.env` file in project root:
 
-Copy `.env.example` to `.env.local` and set the following values:
+```env
+# Frontend API Configuration
+VITE_API_BASE_URL=http://localhost:3000
 
-```dotenv
-# Frontend API base URL for deployed frontend builds only (Netlify)
-# This is not a secret.
-# VITE_API_BASE_URL=https://your-backend.onrender.com
+# Backend Settings
+NODE_ENV=development
+PORT=3000
 
-# ── Server-side Spotify credentials only ────────────────────────
-# https://developer.spotify.com/dashboard → Create App
-# Redirect URI: http://localhost:3001 (required by Spotify form, not used by this app)
-SPOTIFY_CLIENT_ID=your_spotify_client_id_here
-SPOTIFY_CLIENT_SECRET=your_spotify_client_secret_here
+# Spotify API (Optional)
+SPOTIFY_CLIENT_ID=your_client_id_here
+SPOTIFY_CLIENT_SECRET=your_client_secret_here
 
-# ── YouTube download cookies ────────────────────────────────────
-# Optional. Only needed if yt-dlp must use your logged-in browser session.
-# Options: firefox | chrome | edge | brave | chromium | safari | opera | vivaldi | whale
-# YOUTUBE_COOKIES_BROWSER=edge
+# YouTube (Optional - for browser-based cookies)
+YOUTUBE_COOKIES_BROWSER=chrome
 
-# Deployed backend CORS allowlist
-# Set on Render for the backend service
-# FRONTEND_URL=https://your-site.netlify.app
-# FRONTEND_ORIGINS=https://your-site.netlify.app,https://deploy-preview-1--your-site.netlify.app
+# CORS Settings
+FRONTEND_URL=http://localhost:5173
+FRONTEND_ORIGINS=http://localhost:5173,http://localhost:3000
 ```
 
-> **Important:** Do not commit `.env.local`, and do not create `VITE_*` secrets for this project. `VITE_*` variables are intended for browser code and may be exposed in frontend builds.
+**Spotify API Setup:**
+1. Go to: https://developer.spotify.com/dashboard
+2. Create new app
+3. Accept terms
+4. Copy Client ID and Secret
+5. Add to `.env`
 
-> **Netlify note:** This repo builds a static frontend on Netlify, but the Express backend must be hosted separately. Only configure server-side secrets on the backend host, not as frontend `VITE_*` variables.
+### 5. Build Frontend (Optional)
 
-> **Render + Netlify:** `localhost` never works after deployment. In the deployed browser, `localhost` means the visitor's own machine, not your Render server. Set `VITE_API_BASE_URL` in Netlify to your public Render backend URL, and set `FRONTEND_URL` or `FRONTEND_ORIGINS` in Render so CORS allows the Netlify origin.
-
----
-
-## Running the App
-
-```sh
-# Run frontend + backend together (recommended)
-npm run dev:full
-
-# Frontend only (Vite dev server on port 8080)
-npm run dev
-
-# Backend only (Express server)
-npm run server
-
-# Production build
+```bash
 npm run build
 ```
 
-The frontend is available at **http://localhost:8080**  
-The backend API runs on **http://localhost:3001**
+This creates optimized production build in `dist/` folder.
 
 ---
 
-## How It Works
+## Configuration
 
-1. **Paste a URL** — Spotify playlist URL or YouTube playlist URL.
-2. **Metadata fetch** — BeatDrop calls the Spotify or YouTube API to retrieve all track names and artists.
-3. **YouTube matching** — Each Spotify track is automatically matched to a YouTube video by title + artist.
-4. **Preview & reorder** — Browse the full track list and drag-and-drop to reorder if needed.
-5. **Download** — Click Download. The backend streams each track through yt-dlp and ffmpeg, transcodes to your chosen format, and delivers the files directly to your browser. Nothing is stored on the server after delivery.
+### Backend Configuration
 
----
+Edit `server/index.js`:
 
-## Supported Formats
+```javascript
+// Server listening port
+const PORT = process.env.PORT || 3000;
 
-| Format | Extension | Notes |
-|---|---|---|
-| MP3 | `.mp3` | Most compatible, smaller file size |
-| WAV | `.wav` | Lossless, large file size |
-| FLAC | `.flac` | Lossless, compressed |
-| M4A | `.m4a` | AAC in MPEG-4 container |
-| AAC | `.aac` | Raw AAC stream |
+// Parallel download concurrency
+const ZIP_CONCURRENCY = 6; // Downloads 6 tracks simultaneously
 
----
+// Audio quality options
+const AUDIO_QUALITY = "192"; // Can be: 128, 192, 256, 320
 
-## FAQ
+// Output codec
+const CODEC = "mp3"; // Can be: mp3, m4a, opus, vorbis, wav
+```
 
-**Is BeatDrop free?**  
-Yes — 100% free, forever. No subscriptions, no premium tiers, no hidden fees.
+### Frontend Configuration
 
-**Do I need an account?**  
-No. Simply paste a URL and convert. No sign-up or login of any kind.
+Edit `src/lib/api.ts`:
 
-**Is there a track limit?**  
-No. Whether your playlist has 10 songs or 10,000, BeatDrop handles it using paginated API fetching.
+```typescript
+// API endpoint
+const BACKEND = process.env.VITE_API_BASE_URL || "http://localhost:3000";
 
-**Where is my history stored?**  
-Locally in your browser's `localStorage`. It never leaves your device and can be cleared anytime from the History page.
+// Request timeout
+const REQUEST_TIMEOUT = 30000; // 30 seconds
 
-**Does BeatDrop store my music?**  
-No. Audio is streamed directly to your browser. Once the transfer completes, no audio file remains on our servers.
+// Storage keys
+const STORAGE_KEY = "sss_settings";
+```
 
-**What if YouTube blocks the download?**  
-Set `YOUTUBE_COOKIES_BROWSER` in your `.env` to the browser you're logged into YouTube with. This allows yt-dlp to use your real browser cookies to bypass bot detection.
+### Render Deployment
 
----
+If deploying to Render, create `render.yaml`:
 
-## Privacy Policy
+```yaml
+services:
+  - type: web
+    name: sound-switch-studio-backend
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SPOTIFY_CLIENT_ID
+        value: ${SPOTIFY_CLIENT_ID}
+      - key: SPOTIFY_CLIENT_SECRET
+        value: ${SPOTIFY_CLIENT_SECRET}
+```
 
-_Last updated: March 12, 2026_
+And `nixpacks.toml` for system dependencies:
 
-- **No data collection.** BeatDrop does not collect, store, or transmit any personal data to any server.
-- **No audio stored.** Audio files are never persisted on our servers. They are retrieved on-demand and streamed directly to your browser.
-- **Local storage only.** Download history is saved in your browser's `localStorage` — it never leaves your device.
-- **No cookies.** We do not use cookies, analytics, tracking pixels, or advertising of any kind.
-- **Third-party APIs.** When loading a playlist, requests are made to the Spotify API and YouTube Data API, governed by their own privacy policies: [Spotify Privacy Policy](https://www.spotify.com/legal/privacy-policy/) · [Google / YouTube Privacy Policy](https://policies.google.com/privacy).
+```toml
+[build]
+providers = ["nixpacks"]
 
----
-
-## Terms of Service
-
-_Last updated: March 12, 2026_
-
-### 1. Acceptance of Terms
-By using BeatDrop ("the Service"), you agree to these Terms. If you do not agree, do not use the Service.
-
-### 2. User Responsibility
-You are **solely and fully responsible** for all content you download. By using BeatDrop, you confirm that:
-- You have the legal right to download the content you request.
-- You will only download music for personal, non-commercial use unless you hold the appropriate licence.
-- You understand that downloading copyrighted material without authorisation may violate the laws of your jurisdiction.
-- You accept full legal liability for any copyright infringement resulting from your use of the Service.
-
-### 3. No Music Storage
-BeatDrop does not store, cache, host, or redistribute any audio files. Audio is retrieved from public third-party platforms (e.g. YouTube) and passed directly to your browser as a temporary stream. No audio file is ever written to or retained on our servers beyond the duration of your request.
-
-### 4. Copyright & Intellectual Property
-The Service is provided as a technical tool only. We make no representations about the legality of downloading any particular track in your jurisdiction. It is your responsibility to ensure your use complies with all applicable copyright laws, platform terms of service (including Spotify and YouTube), and any other relevant regulations.
-
-### 5. Third-Party Platforms
-BeatDrop uses official Spotify and YouTube APIs to retrieve playlist metadata. Your use of those platforms is governed by their respective terms of service. BeatDrop is **not affiliated with, endorsed by, or sponsored by Spotify, YouTube, or any other platform.**
-
-### 6. Disclaimer of Warranties
-The Service is provided "as is" without warranties of any kind. We make no guarantees regarding uptime, accuracy, or availability of third-party APIs.
-
-### 7. Limitation of Liability
-To the maximum extent permitted by law, BeatDrop and its operators shall not be liable for any indirect, incidental, consequential, or statutory damages arising from your use of the Service, including any liability arising from copyright infringement by the user.
-
-### 8. Changes to Terms
-We may update these Terms at any time. Continued use of the Service after changes constitutes acceptance of the revised Terms.
+[[nixpacks.install]]
+apt-get = ["ffmpeg"]
+```
 
 ---
 
-## Legal Disclaimer
+## Usage
 
-> BeatDrop is a self-hosted download assistant intended for **personal, lawful use only**. It does not store, host, cache, or distribute copyrighted audio content. All audio is retrieved on-demand from public third-party platforms and streamed directly to the requesting device.
->
-> **You — the user — are solely responsible for how you use this service.** Downloading copyrighted content without the rights holder's permission may violate applicable law in your country. The developers of BeatDrop accept no liability for misuse.
+### Development Mode
 
----
+**Terminal 1 - Backend Server:**
+```bash
+npm run dev:server
+# or
+node server/index.js
+```
 
-## Contributing
-
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
-
----
-
-<p align="center">© 2026 BeatDrop — Made for music lovers everywhere.</p>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+**Terminal 2 - Frontend Dev Server:**
+```bash
+npm run dev:frontend
+# or
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+Open: http://localhost:5173
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+### Production Mode
 
-**Use GitHub Codespaces**
+**Build frontend:**
+```bash
+npm run build
+```
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+**Start server:**
+```bash
+npm start
+# or
+NODE_ENV=production node server/index.js
+```
 
-## What technologies are used for this project?
+Server will serve static files from `dist/` folder.
 
-This project is built with:
+### API Endpoints
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+**Backend runs on:** `http://localhost:3000`
 
-## How can I deploy this project?
+#### GET `/api/health`
+Health check endpoint.
 
-Simply open [Lovable](https://lovable.dev/projects/529d1daf-d543-433c-844c-207e89edab26) and click on Share -> Publish.
+**Response:**
+```json
+{
+  "status": "ok",
+  "version": "1.0.0",
+  "ffmpeg": "available"
+}
+```
 
-## Can I connect a custom domain to my Lovable project?
+#### POST `/api/search-spotify`
+Search for playlist on Spotify.
 
-Yes, you can!
+**Request:**
+```json
+{
+  "query": "EDM Hits 2024"
+}
+```
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+**Response:**
+```json
+{
+  "playlists": [
+    {
+      "id": "37i9d...",
+      "name": "EDM Hits",
+      "tracks": 50,
+      "image": "https://..."
+    }
+  ]
+}
+```
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+#### POST `/api/search-youtube`
+Search for playlist on YouTube.
+
+**Request:**
+```json
+{
+  "query": "lofi hip hop beats"
+}
+```
+
+**Response:**
+```json
+{
+  "results": [
+    {
+      "id": "2nR1...",
+      "title": "Lofi Hip Hop",
+      "duration": "3:45"
+    }
+  ]
+}
+```
+
+#### POST `/api/download-zip`
+Download multiple tracks as ZIP (Server-Sent Events).
+
+**Request:**
+```json
+{
+  "tracks": [
+    { "videoId": "dQw4w9...", "title": "Song Name" }
+  ],
+  "codec": "mp3",
+  "audioQuality": "192"
+}
+```
+
+**Response:** Streaming SSE events
+```
+data: {"type":"progress","current":1,"total":5}
+data: {"type":"track_done","title":"Song 1"}
+data: {"type":"zipping","message":"Creating ZIP..."}
+data: {"type":"complete","file":"playlist.zip"}
+```
+
+---
+
+## Localhost Testing
+
+Quick testing without Render/Netlify:
+
+### Setup
+
+1. **Edit hardcoded tracks** in `localhost-server.js`:
+```javascript
+const HARDCODED_TRACKS = [
+  { videoId: "dQw4w9WgXcQ", title: "Rick Astley - Never Gonna Give You Up" },
+  { videoId: "jNQXAC9IVRw", title: "Me at the zoo" }
+];
+```
+
+2. **Start server:**
+```bash
+node localhost-server.js
+```
+
+3. **Open test page:**
+- Right-click `localhost.html` → Open with Browser
+- Or drag-drop to browser
+
+4. **Click download** and watch progress
+
+**Downloads saved to:** `C:\Users\YOUR_NAME\Downloads\sss-downloads`
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+#### ❌ "yt-dlp: command not found"
+
+**Windows:**
+```powershell
+# Check if installed
+yt-dlp --version
+
+# If not, install:
+choco install yt-dlp
+
+# Or add to PATH manually
+setx PATH "%PATH%;C:\Program Files\yt-dlp"
+```
+
+**macOS/Linux:**
+```bash
+which yt-dlp
+brew install yt-dlp  # macOS
+sudo apt-get install yt-dlp  # Linux
+```
+
+#### ❌ "ffmpeg not found"
+
+```bash
+# Verify installation
+ffmpeg -version
+
+# Install if missing
+choco install ffmpeg        # Windows
+brew install ffmpeg         # macOS
+sudo apt-get install ffmpeg # Linux
+```
+
+#### ❌ "Cannot find module 'express'"
+
+```bash
+# Reinstall dependencies
+rm -rf node_modules
+npm install
+```
+
+#### ❌ "CORS error" or "API not responding"
+
+1. Check if backend is running: `http://localhost:3000/api/health`
+2. Check `VITE_API_BASE_URL` in browser console (F12)
+3. Verify `.env` file exists with correct `PORT`
+4. Check firewall isn't blocking port 3000
+
+**Windows Firewall:**
+```powershell
+# Allow Node.js through firewall
+netsh advfirewall firewall add rule name="Node.js" dir=in action=allow program="C:\Program Files\nodejs\node.exe"
+```
+
+#### ❌ "All track downloads failed — ZIP would be empty"
+
+**Most likely cause:** YouTube is blocking downloads (authentication required)
+
+**Solutions:**
+1. Try a different video (some require login)
+2. Use Spotify playlist instead
+3. Check YouTube hasn't changed their API
+
+#### ❌ Downloads timeout or hang
+
+**Solutions:**
+1. Check internet connection
+2. Try lower quality (128 kbps instead of 320)
+3. Increase timeout in API: `--socket-timeout 60` (in seconds)
+4. Try different video
+
+#### ❌ "Port 3000 already in use"
+
+```bash
+# Windows: Find and kill process
+netstat -ano | findstr :3000
+taskkill /PID <PID> /F
+
+# macOS/Linux:
+lsof -i :3000
+kill -9 <PID>
+```
+
+---
+
+## Known Issues & Limitations
+
+### YouTube-Specific Issues
+
+⚠️ **YouTube 2024+ Restrictions:**
+- YouTube now requires authentication for many videos
+- Some music videos blocked by copyright claims
+- Age-restricted content cannot be downloaded
+- Live streams not supported
+- Premium YouTube Music requires subscription
+
+**Workaround:** Use Spotify playlists when possible
+
+### Audio Quality Limitations
+
+⚠️ **Quality depends on source:**
+- YouTube audio maxes out at ~192 kbps
+- Spotify limits quality
+- Some videos have no audio stream available
+
+### Performance Concerns
+
+⚠️ **Large playlists (100+ tracks):**
+- Memory usage increases significantly
+- Download time can be 30+ minutes
+- ZIP file size grows quickly
+- Free tier hosting (Render) may timeout
+
+**Recommendation:** Download playlists in batches of 10-20 tracks
+
+### Browser Compatibility
+
+✅ **Fully Supported:**
+- Chrome/Chromium 90+
+- Firefox 88+
+- Safari 14+
+- Edge 90+
+
+⚠️ **Limited Support:**
+- IE 11 (not supported)
+- Mobile browsers (downloads may not work as expected)
+
+### Deployment Limitations
+
+⚠️ **Render Free Tier:**
+- Spins down after 15 minutes of inactivity
+- Limited memory (512MB)
+- Limited disk space
+- May timeout on large playlists
+
+⚠️ **Netlify Free Tier:**
+- Limited build time (300 minutes/month)
+- Function timeout (10 seconds)
+- SSE streams may disconnect
+
+### Copyright & Legal
+
+⚠️ **Copyright Notice:**
+- Downloads are for personal use only
+- Users are responsible for copyright compliance
+- Do not distribute copyrighted content
+- Some content may be protected by DMCA
+
+This tool is provided as-is for educational purposes.
+
+---
+
+## API Reference
+
+### Error Responses
+
+**400 Bad Request:**
+```json
+{
+  "error": "Missing required parameter: videoId"
+}
+```
+
+**429 Too Many Requests:**
+```json
+{
+  "error": "Rate limited. Try again in 60 seconds"
+}
+```
+
+**500 Server Error:**
+```json
+{
+  "error": "FFmpeg not found. Install ffmpeg to continue"
+}
+```
+
+---
+
+## Architecture
+
+### Frontend Stack
+- **Framework:** React 18 + TypeScript
+- **Build Tool:** Vite
+- **Styling:** Tailwind CSS
+- **UI Components:** shadcn/ui
+- **HTTP Client:** Axios
+- **State:** React Context + Hooks
+
+### Backend Stack
+- **Runtime:** Node.js 18+
+- **Framework:** Express.js
+- **Download:** yt-dlp-wrap
+- **Audio Processing:** FFmpeg
+- **Archive:** Archiver
+- **Real-time:** Server-Sent Events (SSE)
+
+### Deployment
+- **Frontend:** Netlify (static hosting)
+- **Backend:** Render (Node.js free tier)
+- **Storage:** Local filesystem (temporary)
+
+### Key Processes
+
+1. **Playlist Resolution:**
+   - Search YouTube/Spotify API
+   - Extract track metadata
+   - Generate video IDs
+
+2. **Download Pipeline:**
+   - Spawn yt-dlp process per track
+   - Parallel processing (max 6 concurrent)
+   - Real-time progress via SSE
+   - Metadata preservation
+
+3. **Audio Processing:**
+   - Extract audio stream with FFmpeg
+   - Convert to desired format
+   - Apply quality settings
+   - Output to temp directory
+
+4. **Archive Creation:**
+   - Collect all downloaded files
+   - Create ZIP with archiver
+   - Clean up temp files
+   - Return ZIP for download
+
+---
+
+## Development
+
+### Project Structure
+
+```
+sound-switch-studio/
+├── src/
+│   ├── App.tsx                 # Main app component
+│   ├── main.tsx               # React entry point
+│   ├── index.css              # Global styles
+│   ├── App.css                # App styles
+│   ├── components/
+│   │   ├── Header.tsx
+│   │   ├── HeroSection.tsx
+│   │   ├── ConvertSection.tsx
+│   │   ├── PlaylistPreview.tsx
+│   │   ├── HowItWorksSection.tsx
+│   │   ├── FaqSection.tsx
+│   │   ├── Footer.tsx
+│   │   ├── ThemeToggle.tsx
+│   │   └── ui/                # shadcn components
+│   ├── pages/
+│   │   ├── Index.tsx
+│   │   ├── About.tsx
+│   │   ├── Privacy.tsx
+│   │   ├── Terms.tsx
+│   │   └── NotFound.tsx
+│   ├── lib/
+│   │   ├── api.ts             # API client
+│   │   ├── utils.ts           # Utilities
+│   │   └── history.ts         # Download history
+│   └── hooks/
+│       ├── use-toast.ts
+│       └── use-mobile.tsx
+├── server/
+│   └── index.js               # Express backend
+├── public/
+│   └── robots.txt
+├── .env                       # Environment variables
+├── vite.config.ts            # Vite configuration
+├── tsconfig.json             # TypeScript config
+├── package.json              # Dependencies
+└── README.md                 # This file
+```
+
+### Adding Features
+
+**1. New API Endpoint:**
+
+```javascript
+// server/index.js
+app.post("/api/my-feature", async (req, res) => {
+  try {
+    const { param } = req.body;
+    // Your logic here
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+```
+
+**2. New Frontend Component:**
+
+```typescript
+// src/components/MyComponent.tsx
+import React from "react";
+
+export function MyComponent() {
+  return <div>My Component</div>;
+}
+```
+
+**3. New Page:**
+
+```typescript
+// src/pages/MyPage.tsx
+export default function MyPage() {
+  return <main>My Page</main>;
+}
+```
+
+### Testing
+
+```bash
+# Run localhost version
+node localhost-server.js
+
+# Test single download
+node test-download.js
+
+# Check health
+curl http://localhost:3000/api/health
+```
+
+### Building for Production
+
+```bash
+# Build frontend
+npm run build
+
+# Output in: dist/
+# Deploy to Netlify or any static host
+
+# Build backend (if needed)
+npm run build:server
+```
+
+---
+
+## License
+
+**Copyright © 2026 Rakesh Kannan C K. All rights reserved.**
+
+This project is provided as-is for personal and educational use only. Unauthorized copying, distribution, or modification is strictly prohibited.
+
+### Third-Party Licenses
+
+This project uses several open-source libraries:
+
+- **yt-dlp** - Public Domain (https://github.com/yt-dlp/yt-dlp)
+- **FFmpeg** - LGPL 2.1+ (https://ffmpeg.org)
+- **React** - MIT (https://reactjs.org)
+- **Express** - MIT (https://expressjs.com)
+- **Tailwind CSS** - MIT (https://tailwindcss.com)
+
+### Disclaimer
+
+This tool is for personal use only. Users are responsible for:
+- Verifying copyright compliance
+- Following YouTube Terms of Service
+- Following Spotify Terms of Service
+- Complying with local laws regarding digital content
+
+The author is not responsible for misuse or copyright violations.
+
+---
+
+## Support & Feedback
+
+For issues, suggestions, or questions:
+
+1. Check **Troubleshooting** section above
+2. Review error logs in terminal
+3. Visit: https://github.com/Rake-5105/sound-switch-studio/issues
+
+---
+
+**Last Updated:** March 2026
+**Version:** 1.0.0
+**Author:** Rakesh Kannan C K
+**Twitter:** [@RakeshKannan](https://twitter.com/rakeshkannan)
+**GitHub:** [@Rake-5105](https://github.com/Rake-5105)
+
+**Copyright © 2026 Rakesh Kannan C K. All rights reserved.**

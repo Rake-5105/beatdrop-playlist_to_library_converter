@@ -1,3 +1,16 @@
+/**
+ * Sound Switch Studio - Backend Server
+ * 
+ * Copyright © 2026 Rakesh Kannan C K. All rights reserved.
+ * 
+ * This file is part of Sound Switch Studio and is provided as-is
+ * for personal and educational use only. Unauthorized copying,
+ * distribution, or modification is strictly prohibited.
+ * 
+ * Users are responsible for ensuring their use complies with all
+ * applicable copyright laws and platform terms of service.
+ */
+
 import express from "express";
 import cors from "cors";
 import { createRequire } from "module";
