@@ -1,14 +1,6 @@
 /**
- * Sound Switch Studio - API Service Layer
- * 
- * Copyright © 2026 Rakesh Kannan C K. All rights reserved.
- * 
- * This file is part of Sound Switch Studio and is provided as-is
- * for personal and educational use only. Unauthorized copying,
- * distribution, or modification is strictly prohibited.
- * 
- * Backend credentials live in .env.local (copy .env.example).
- * Do not put secrets in VITE_* variables.
+ * Sound Switch Studio - API Service
+ * Copyright © 2026 Rakesh Kannan
  */
 //
 // Start BOTH servers:  npm run dev:full

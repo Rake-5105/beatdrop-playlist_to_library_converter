@@ -2,15 +2,7 @@
 
 /**
  * Sound Switch Studio - Test Download Script
- * 
- * Copyright © 2026 Rakesh Kannan C K. All rights reserved.
- * 
- * This file is part of Sound Switch Studio and is provided as-is
- * for personal and educational use only. Unauthorized copying,
- * distribution, or modification is strictly prohibited.
- * 
- * Simple hardcoded test script for downloading tracks to localhost.
- * No Render, no Netlify, just pure local testing.
+ * Copyright © 2026 Rakesh Kannan
  */
  */
 
