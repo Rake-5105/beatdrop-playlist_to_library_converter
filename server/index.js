@@ -9,13 +9,28 @@ import crypto from "crypto";
 import { spawn } from "child_process";
 import archiver from "archiver";
 
-// ── UNBUFFERED logging for Render ──
-// Force immediate output, don't buffer if logs are missing
+// ── FILE-BASED LOGGING as backup ──
+const logDir = path.join(os.tmpdir(), "sss-logs");
+fs.mkdirSync(logDir, { recursive: true });
+const logFile = path.join(logDir, `server-${Date.now()}.log`);
+
+function fileLog(...args) {
+  const timestamp = new Date().toISOString();
+  const msg = `[${timestamp}] ${args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ')}\n`;
+  try {
+    fs.appendFileSync(logFile, msg);
+  } catch (e) {
+    // Ignore file write errors
+  }
+}
+
+// ── UNBUFFERED console logging for Render ──
 const originalLog = console.log;
 const originalWarn = console.warn;
 const originalError = console.error;
 
 function flushLog(...args) {
+  fileLog(...args);
   originalLog(...args);
   // Aggressive flush
   if (process.stdout && process.stdout.write) {
@@ -850,6 +865,8 @@ app.post("/api/download-zip", (req, res) => {
     broadcast(jobId, { type: "error", message: err.message });
     jobs.get(jobId)?.clients.forEach((c) => c.end());
     console.error(`[job ${jobId.slice(0,6)}] error:`, err.message);
+  }).finally(() => {
+    console.log(`[job ${jobId.slice(0,6)}] runDownloadJob completed (success or error)`);
   });
 
   console.log(`[job ${jobId.slice(0,6)}] Job enqueued, returning jobId to frontend`);
