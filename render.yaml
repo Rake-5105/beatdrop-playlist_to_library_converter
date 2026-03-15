@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: sound-switch-studio-backend
+    env: node
+    plan: free
+    
+    buildCommand: npm install
+    startCommand: npm start
+    
+    envVars:
+      - key: NODE_ENV
+        value: production
+    
+    # FFmpeg will be installed via nixpacks.toml
+    # Make sure nixpacks.toml is in the root directory

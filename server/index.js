@@ -92,6 +92,39 @@ async function ensureYtDlp() {
   }
 }
 
+async function checkFFmpeg() {
+  return new Promise((resolve) => {
+    console.log(`📦  FFmpeg path: ${ffmpegPath}`);
+    console.log(`📦  FFmpeg exists: ${fs.existsSync(ffmpegPath)}`);
+    
+    if (!fs.existsSync(ffmpegPath)) {
+      console.error(`❌  FFmpeg NOT FOUND at ${ffmpegPath}`);
+      console.error(`⚠️  Audio conversion will FAIL! Install ffmpeg-static or ffmpeg.`);
+      resolve(false);
+      return;
+    }
+
+    const proc = spawn(ffmpegPath, ["-version"]);
+    let output = "";
+    proc.stdout.on("data", (chunk) => output += chunk.toString());
+    proc.stderr.on("data", (chunk) => output += chunk.toString());
+    proc.on("close", (code) => {
+      if (code === 0 && output) {
+        const firstLine = output.split("\n")[0];
+        console.log(`✅  FFmpeg ready (${firstLine.trim()})`);
+        resolve(true);
+      } else {
+        console.error(`❌  FFmpeg check failed (exit ${code})`);
+        resolve(false);
+      }
+    });
+    proc.on("error", (err) => {
+      console.error(`❌  FFmpeg spawn error: ${err.message}`);
+      resolve(false);
+    });
+  });
+}
+
 app.use(cors({
   origin: (origin, callback) => {
     if (
@@ -405,7 +438,15 @@ function broadcast(jobId, data) {
 
 async function downloadToTempFile(videoId, codec, audioQuality, index) {
   const tmpBase = path.join(os.tmpdir(), `sss-${Date.now()}-${index}`);
+  const tmpDir = path.dirname(tmpBase);
   const sourceUrl = `https://www.youtube.com/watch?v=${videoId}`;
+
+  console.log(`[dl ${index}] === Starting download ===`);
+  console.log(`[dl ${index}] URL: ${sourceUrl}`);
+  console.log(`[dl ${index}] Output: ${tmpBase}.%(ext)s`);
+  console.log(`[dl ${index}] Codec: ${codec}, Quality: ${audioQuality}`);
+  console.log(`[dl ${index}] FFmpeg location: ${ffmpegPath}`);
+  console.log(`[dl ${index}] Temp directory: ${tmpDir}`);
 
   const baseArgs = [
     sourceUrl,
@@ -421,7 +462,8 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
 
   const runOnce = (args, label) =>
     new Promise((resolve) => {
-      console.log(`[dl ${index}] Running ${label}: ${ytDlpBinaryPath} ${args.slice(0, 5).join(" ")} ...`);
+      console.log(`[dl ${index}] Running ${label}...`);
+      console.log(`[dl ${index}] Full args: ${JSON.stringify(args)}`);
       const proc = spawn(ytDlpBinaryPath, args);
       let outBuf = "";
       let errBuf = "";
@@ -429,8 +471,16 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
         proc.kill("SIGTERM");
         console.error(`[dl ${index}] ${label} timeout (10m), killed`);
       }, 10 * 60 * 1000);
-      proc.stdout.on("data", (chunk) => (outBuf += chunk.toString()));
-      proc.stderr.on("data", (chunk) => (errBuf += chunk.toString()));
+      proc.stdout.on("data", (chunk) => {
+        const text = chunk.toString();
+        outBuf += text;
+        console.log(`[dl ${index}] stdout: ${text.trim()}`);
+      });
+      proc.stderr.on("data", (chunk) => {
+        const text = chunk.toString();
+        errBuf += text;
+        console.warn(`[dl ${index}] stderr: ${text.trim()}`);
+      });
       proc.on("error", (err) => {
         clearTimeout(killTimer);
         console.error(`[dl ${index}] ${label} spawn error: ${err.message}`);
@@ -440,13 +490,11 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
         clearTimeout(killTimer);
         if (code === 0) {
           console.log(`[dl ${index}] ${label} exit 0 ✅`);
-          if (outBuf) console.log(`[dl ${index}] stdout: ${outBuf.slice(0, 200)}`);
           resolve({ ok: true, err: "", out: outBuf });
         } else if (code === 1) {
           // yt-dlp exits 1 for non-fatal warnings (e.g. PO Token, format fallbacks).
           // The file may still have been written — let findOutput() decide.
           console.warn(`[dl ${index}] ${label} exit 1 (soft warning), will check for output file...`);
-          if (errBuf) console.warn(`[dl ${index}] stderr: ${errBuf.slice(-400)}`);
           resolve({ ok: true, warn: true, err: errBuf, out: outBuf });
         } else {
           // exit 2+ is a hard failure (e.g. no formats, network error, killed)
@@ -481,6 +529,8 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
               console.log(`[dl ${index}]   stat ${path.basename(p)}: ${size} bytes`);
               if (size > 0) {
                 return true;
+              } else {
+                console.warn(`[dl ${index}]   ZERO SIZE: ${path.basename(p)}`);
               }
             } catch (e) {
               console.warn(`[dl ${index}]   stat fail ${path.basename(p)}: ${e.message}`);
@@ -800,12 +850,13 @@ app.post("/api/spotify/token", async (req, res) => {
 });
 
 ensureYtDlp()
+  .then(() => checkFFmpeg())
   .then(() => {
     app.listen(PORT, "0.0.0.0", () =>
       console.log(`\n🎵  Sound Switch Studio backend → http://0.0.0.0:${PORT}\n`)
     );
   })
   .catch((err) => {
-    console.error("❌  Failed to init yt-dlp:", err?.message ?? err);
+    console.error("❌  Failed to init:", err?.message ?? err);
     process.exit(1);
   });
