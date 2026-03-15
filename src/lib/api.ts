@@ -233,12 +233,38 @@ export async function downloadAllTracks(
     });
     
     console.log(`📥 Response status:`, startRes.status, startRes.statusText);
+    console.log(`📥 Response headers:`, {
+      contentType: startRes.headers.get("content-type"),
+      contentLength: startRes.headers.get("content-length"),
+    });
     
     if (!startRes.ok) {
-      const err = await startRes.json().catch(() => ({ error: startRes.statusText }));
-      throw new Error(err.error ?? "Failed to start ZIP job");
+      const errText = await startRes.text();
+      console.error(`❌ POST failed, response body:`, errText);
+      try {
+        const err = JSON.parse(errText);
+        throw new Error(err.error ?? "Failed to start ZIP job");
+      } catch {
+        throw new Error(`Failed to start ZIP job: ${errText || startRes.statusText}`);
+      }
     }
-    const { jobId } = await startRes.json();
+    
+    const responseText = await startRes.text();
+    console.log(`📥 Raw response body:`, responseText);
+    
+    let jobId;
+    try {
+      const json = JSON.parse(responseText);
+      jobId = json.jobId;
+    } catch (e) {
+      console.error(`❌ Failed to parse response as JSON:`, e);
+      throw new Error(`Invalid response from server: ${responseText}`);
+    }
+    
+    if (!jobId) {
+      console.error(`❌ No jobId in response:`, responseText);
+      throw new Error("Server did not return a jobId");
+    }
     console.log(`✅ Job created:`, jobId);
 
     // Phase 2: SSE progress — bar goes 0 → 100% over actual downloads
