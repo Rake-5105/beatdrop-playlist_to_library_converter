@@ -55,7 +55,19 @@ const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const YTDlpWrap = require("yt-dlp-wrap").default;
 const YoutubeSearchApi = require("youtube-search-api");
-const ffmpegPath = require("ffmpeg-static");
+// Try to get FFmpeg path - prefer system ffmpeg from nixpacks, fallback to ffmpeg-static
+let ffmpegPath = "ffmpeg"; // Default to system PATH
+try {
+  const ffmpegStatic = require("ffmpeg-static");
+  if (ffmpegStatic && fs.existsSync(ffmpegStatic)) {
+    ffmpegPath = ffmpegStatic;
+    console.log(`🎬 Using ffmpeg-static from node_modules: ${ffmpegPath}`);
+  } else {
+    console.log(`🎬 ffmpeg-static not available, using system ffmpeg`);
+  }
+} catch (e) {
+  console.log(`🎬 ffmpeg-static not available, using system ffmpeg`);
+}
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -146,21 +158,44 @@ async function checkFFmpeg() {
       return;
     }
 
+    // Check file permissions
+    try {
+      const stats = fs.statSync(ffmpegPath);
+      console.log(`📦  FFmpeg file size: ${stats.size} bytes`);
+      console.log(`📦  FFmpeg is file: ${stats.isFile()}`);
+      console.log(`📦  FFmpeg permissions: ${(stats.mode & parseInt("0o777", 8)).toString(8)}`);
+    } catch (e) {
+      console.error(`❌  Could not stat FFmpeg: ${e.message}`);
+    }
+
     const proc = spawn(ffmpegPath, ["-version"]);
     let output = "";
+    let errors = "";
     proc.stdout.on("data", (chunk) => output += chunk.toString());
-    proc.stderr.on("data", (chunk) => output += chunk.toString());
+    proc.stderr.on("data", (chunk) => errors += chunk.toString());
+    
+    const timeout = setTimeout(() => {
+      proc.kill();
+      console.error(`❌  FFmpeg check timed out after 5 seconds`);
+      resolve(false);
+    }, 5000);
+    
     proc.on("close", (code) => {
-      if (code === 0 && output) {
-        const firstLine = output.split("\n")[0];
+      clearTimeout(timeout);
+      const fullOutput = output + errors;
+      if (code === 0 && fullOutput) {
+        const firstLine = fullOutput.split("\n")[0];
         console.log(`✅  FFmpeg ready (${firstLine.trim()})`);
         resolve(true);
       } else {
         console.error(`❌  FFmpeg check failed (exit ${code})`);
+        if (fullOutput) console.error(`   Output: ${fullOutput.slice(0, 500)}`);
         resolve(false);
       }
     });
+    
     proc.on("error", (err) => {
+      clearTimeout(timeout);
       console.error(`❌  FFmpeg spawn error: ${err.message}`);
       resolve(false);
     });
@@ -548,9 +583,16 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
       });
       proc.on("close", (code) => {
         clearTimeout(killTimer);
+        
+        // ALWAYS log stderr - it contains FFmpeg errors even on exit 0
+        if (errBuf) {
+          console.warn(`[dl ${index}] ${label} STDERR output:`);
+          console.warn(errBuf.slice(0, 2000)); // Log first 2000 chars
+        }
+        
         if (code === 0) {
-          console.log(`[dl ${index}] ${label} exit 0 ✅`);
-          resolve({ ok: true, err: "", out: outBuf });
+          console.log(`[dl ${index}] ${label} exit 0 ✅ (but check stderr above for FFmpeg errors)`);
+          resolve({ ok: true, err: errBuf, out: outBuf }); // Include errBuf!
         } else if (code === 1) {
           // yt-dlp exits 1 for non-fatal warnings (e.g. PO Token, format fallbacks).
           // The file may still have been written — let findOutput() decide.
