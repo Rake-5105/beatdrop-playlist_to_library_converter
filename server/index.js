@@ -99,8 +99,15 @@ const ytDlpWrap = new YTDlpWrap(ytDlpBinaryPath);
 const VALID_BROWSERS = new Set(["brave", "chrome", "chromium", "edge", "firefox", "opera", "safari", "vivaldi", "whale"]);
 const _rawBrowser = process.env.YOUTUBE_COOKIES_BROWSER?.trim();
 const COOKIES_BROWSER = _rawBrowser && VALID_BROWSERS.has(_rawBrowser) ? _rawBrowser : null;
-console.log(`🍪  Cookie browser: ${COOKIES_BROWSER ?? "(none — set YOUTUBE_COOKIES_BROWSER in .env)"}`);
-if (_rawBrowser && !COOKIES_BROWSER) console.warn(`⚠️  Invalid YOUTUBE_COOKIES_BROWSER value: "${_rawBrowser}" — ignoring`);
+
+if (COOKIES_BROWSER) {
+  console.log(`✅  YouTube cookies enabled (browser: ${COOKIES_BROWSER})`);
+} else {
+  console.error(`❌  YOUTUBE_COOKIES_BROWSER not set! YouTube will block downloads.`);
+  console.error(`    Add to Render environment variables: YOUTUBE_COOKIES_BROWSER=chrome`);
+}
+
+if (_rawBrowser && !COOKIES_BROWSER) console.warn(`⚠️  Invalid YOUTUBE_COOKIES_BROWSER value: "${_rawBrowser}" — ignored`);
 
 function cookiesArg() {
   return COOKIES_BROWSER ? ["--cookies-from-browser", COOKIES_BROWSER] : [];
@@ -712,14 +719,22 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
     return null;
   }
 
-  console.log(`[dl ${index}] Download succeeded, now looking for output file...`);
+  console.log(`[dl ${index}] Download succeeded (exit 0), now looking for output file...`);
+  console.log(`[dl ${index}] Searching for: ${tmpBase}*`);
   const output = await findOutput();
   if (output) {
     console.log(`[dl ${index}] ✅  Download complete: ${path.basename(output)}`);
     return output;
   }
 
+  // No file found despite exit 0 — this usually means YouTube blocked the download
   console.error(`[dl ${index}] ❌  No output file found after successful exit`);
+  console.error(`[dl ${index}] 🔍 DIAGNOSTIC: yt-dlp said OK but produced nothing`);
+  if (result.err && result.err.length > 0) {
+    console.error(`[dl ${index}] 📋 Last stderr line: ${result.err.split('\n').filter(l => l.trim()).pop()}`);
+  }
+  console.error(`[dl ${index}] 🔧 Most likely: YouTube is blocking (bot detection or cookies issue)`);
+  console.error(`[dl ${index}] 💡 Make sure YOUTUBE_COOKIES_BROWSER is set in Render environment!`);
   return null;
 }
 
