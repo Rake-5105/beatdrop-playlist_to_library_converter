@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SSS - Localhost Downloader</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .container {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 600px;
+      width: 100%;
+      padding: 40px;
+    }
+
+    h1 {
+      font-size: 28px;
+      margin-bottom: 10px;
+      color: #333;
+    }
+
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+      font-size: 14px;
+    }
+
+    .controls {
+      display: grid;
+      gap: 15px;
+      margin-bottom: 30px;
+    }
+
+    label {
+      display: block;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 5px;
+      font-size: 14px;
+    }
+
+    select,
+    input {
+      padding: 10px 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 14px;
+      width: 100%;
+      background: white;
+      cursor: pointer;
+    }
+
+    select:focus,
+    input:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    .button-group {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    button {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .btn-secondary {
+      background: #f0f0f0;
+      color: #333;
+    }
+
+    .btn-secondary:hover {
+      background: #e0e0e0;
+    }
+
+    .progress-section {
+      display: none;
+      margin-top: 30px;
+      padding-top: 30px;
+      border-top: 1px solid #eee;
+    }
+
+    .progress-section.active {
+      display: block;
+    }
+
+    .progress-bar-container {
+      background: #f0f0f0;
+      height: 6px;
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 15px;
+    }
+
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+      width: 0%;
+      transition: width 0.3s;
+    }
+
+    .progress-text {
+      font-size: 13px;
+      color: #666;
+      margin-bottom: 12px;
+    }
+
+    .messages {
+      max-height: 300px;
+      overflow-y: auto;
+      background: #f9f9f9;
+      border-radius: 6px;
+      padding: 12px;
+    }
+
+    .message {
+      font-size: 12px;
+      padding: 6px;
+      margin-bottom: 6px;
+      border-left: 3px solid #ddd;
+      padding-left: 9px;
+      color: #666;
+    }
+
+    .message.success {
+      border-left-color: #4caf50;
+      color: #2e7d32;
+      background: #f1f8f4;
+    }
+
+    .message.error {
+      border-left-color: #f44336;
+      color: #c62828;
+      background: #fdf5f3;
+    }
+
+    .message.info {
+      border-left-color: #2196f3;
+      color: #1565c0;
+      background: #f3f8fd;
+    }
+
+    .playlist-info {
+      background: #f9f9f9;
+      border-radius: 6px;
+      padding: 15px;
+      margin-bottom: 20px;
+    }
+
+    .track-list {
+      font-size: 13px;
+    }
+
+    .track-item {
+      padding: 6px;
+      margin: 4px 0;
+      background: white;
+      border-radius: 4px;
+      border-left: 2px solid #667eea;
+      padding-left: 8px;
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: 600;
+      margin-left: auto;
+    }
+
+    .status-badge.pending {
+      background: #fff3cd;
+      color: #856404;
+    }
+
+    .status-badge.done {
+      background: #d4edda;
+      color: #155724;
+    }
+
+    .status-badge.error {
+      background: #f8d7da;
+      color: #721c24;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎵 Sound Switch Studio</h1>
+    <p class="subtitle">Localhost Test Downloader</p>
+
+    <!-- Playlist Info -->
+    <div class="playlist-info" id="playlistInfo"></div>
+
+    <!-- Controls -->
+    <div class="controls">
+      <div>
+        <label for="codec">Audio Format</label>
+        <select id="codec">
+          <option value="mp3">MP3</option>
+          <option value="m4a">M4A</option>
+          <option value="opus">OPUS</option>
+          <option value="vorbis">VORBIS</option>
+          <option value="wav">WAV</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="quality">Audio Quality</label>
+        <select id="quality">
+          <option value="192">192 kbps</option>
+          <option value="256">256 kbps</option>
+          <option value="320">320 kbps</option>
+        </select>
+      </div>
+
+      <div class="button-group">
+        <button class="btn-primary" onclick="downloadPlaylist()">⬇️ Download All</button>
+        <button class="btn-secondary" onclick="clearMessages()">🗑️ Clear Log</button>
+      </div>
+    </div>
+
+    <!-- Progress Section -->
+    <div class="progress-section" id="progressSection">
+      <div class="progress-bar-container">
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+      <div class="progress-text" id="progressText">Starting...</div>
+      <div class="messages" id="messages"></div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = "http://localhost:3000";
+
+    // Load playlist info on start
+    window.addEventListener("load", () => {
+      loadPlaylistInfo();
+    });
+
+    async function loadPlaylistInfo() {
+      try {
+        const res = await fetch(`${API_BASE}/api/playlist`);
+        const data = await res.json();
+
+        document.getElementById("playlistInfo").innerHTML = `
+          <strong>📋 Playlist:</strong> ${data.name}<br>
+          <strong>🎬 Tracks:</strong> ${data.count}<br>
+          ${
+            data.tracks.length > 0
+              ? `
+            <div class="track-list">
+              ${data.tracks
+                .map(
+                  (t) => `
+                <div class="track-item">
+                  ${t.title}
+                  <span class="status-badge pending">pending</span>
+                </div>
+              `
+                )
+                .join("")}
+            </div>
+          `
+              : ""
+          }
+        `;
+      } catch (err) {
+        addMessage(`Failed to load playlist: ${err.message}`, "error");
+      }
+    }
+
+    function downloadPlaylist() {
+      const codec = document.getElementById("codec").value;
+      const quality = document.getElementById("quality").value;
+
+      document.getElementById("progressSection").classList.add("active");
+      clearMessages();
+      addMessage("Starting download...", "info");
+
+      const eventSource = new EventSource(
+        `${API_BASE}/api/download-zip?codec=${codec}&quality=${quality}`
+      );
+
+      let total = 0;
+      let current = 0;
+
+      eventSource.addEventListener("message", (e) => {
+        const data = JSON.parse(e.data);
+
+        switch (data.type) {
+          case "start":
+            total = data.total;
+            addMessage(`Downloading ${total} tracks...`, "info");
+            break;
+
+          case "progress":
+            current = data.current;
+            updateProgress(current, total);
+            addMessage(data.message, "info");
+            break;
+
+          case "track_done":
+            const pct = Math.round(((data.index) / total) * 100);
+            addMessage(`✅ [${pct}%] ${data.title}`, "success");
+            break;
+
+          case "track_error":
+            addMessage(
+              `❌ Failed: ${data.title} (May require authentication)`,
+              "error"
+            );
+            break;
+
+          case "zipping":
+            addMessage(data.message, "info");
+            break;
+
+          case "complete":
+            updateProgress(total, total);
+            addMessage(`🎉 ${data.message} (${data.tracks} files)`, "success");
+            addMessage(`📦 File saved: ${data.file}`, "success");
+            setTimeout(() => {
+              eventSource.close();
+              document.getElementById("progressSection").classList.remove("active");
+            }, 1000);
+            break;
+
+          case "error":
+            addMessage(`⚠️ ${data.message}`, "error");
+            eventSource.close();
+            break;
+        }
+      });
+
+      eventSource.onerror = () => {
+        addMessage("Connection closed", "error");
+        eventSource.close();
+      };
+    }
+
+    function updateProgress(current, total) {
+      if (total === 0) return;
+      const percent = (current / total) * 100;
+      document.getElementById("progressBar").style.width = percent + "%";
+      document.getElementById("progressText").textContent = `Progress: ${current}/${total}`;
+    }
+
+    function addMessage(text, type = "info") {
+      const messagesDiv = document.getElementById("messages");
+      const message = document.createElement("div");
+      message.className = `message ${type}`;
+      message.textContent = `${new Date().toLocaleTimeString()} - ${text}`;
+      messagesDiv.appendChild(message);
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+
+    function clearMessages() {
+      document.getElementById("messages").innerHTML = "";
+    }
+  </script>
+</body>
+</html>
