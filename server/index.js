@@ -439,12 +439,19 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
       proc.on("close", (code) => {
         clearTimeout(killTimer);
         if (code === 0) {
-          console.log(`[dl ${index}] ${label} exit 0 - checking output...`);
+          console.log(`[dl ${index}] ${label} exit 0 ✅`);
           if (outBuf) console.log(`[dl ${index}] stdout: ${outBuf.slice(0, 200)}`);
           resolve({ ok: true, err: "", out: outBuf });
+        } else if (code === 1) {
+          // yt-dlp exits 1 for non-fatal warnings (e.g. PO Token, format fallbacks).
+          // The file may still have been written — let findOutput() decide.
+          console.warn(`[dl ${index}] ${label} exit 1 (soft warning), will check for output file...`);
+          if (errBuf) console.warn(`[dl ${index}] stderr: ${errBuf.slice(-400)}`);
+          resolve({ ok: true, warn: true, err: errBuf, out: outBuf });
         } else {
+          // exit 2+ is a hard failure (e.g. no formats, network error, killed)
           const msg = errBuf.slice(-600) || `exit code ${code}`;
-          console.error(`[dl ${index}] ${label} exit ${code}: ${msg}`);
+          console.error(`[dl ${index}] ${label} hard exit ${code}: ${msg}`);
           resolve({ ok: false, err: msg, out: outBuf });
         }
       });
@@ -519,9 +526,9 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
   ];
   let result = await runOnce(primaryArgs, `bestaudio→${codec}`);
 
-  // Fallback: if primary fails, try without explicit format conversion (raw best audio)
+  // Fallback: if primary hard-failed, retry without forced player client (let yt-dlp auto-pick)
   if (!result.ok) {
-    console.warn(`[dl ${index}] ⚠️  Primary attempt failed, trying fallback (raw bestaudio)...`);
+    console.warn(`[dl ${index}] ⚠️  Primary attempt hard-failed, trying fallback...`);
     const fallbackArgs = [
       "-f", "bestaudio/best",
       "-x",
@@ -529,8 +536,15 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
       "--audio-quality", audioQuality,
       "--ffmpeg-location", ffmpegPath,
       "--no-warnings",
-      "--extractor-args", "youtube:player_client=web",
-      ...baseArgs,
+      // Drop extractor-args override — let yt-dlp pick the best client automatically
+      sourceUrl,
+      "--force-ipv4",
+      "--socket-timeout", "30",
+      "--retries", "8",
+      "--fragment-retries", "8",
+      ...cookiesArg(),
+      "-o", `${tmpBase}.%(ext)s`,
+      "--no-playlist",
     ];
     result = await runOnce(fallbackArgs, `fallback→${codec}`);
   }
