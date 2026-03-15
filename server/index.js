@@ -100,11 +100,39 @@ const VALID_BROWSERS = new Set(["brave", "chrome", "chromium", "edge", "firefox"
 const _rawBrowser = process.env.YOUTUBE_COOKIES_BROWSER?.trim();
 const COOKIES_BROWSER = _rawBrowser && VALID_BROWSERS.has(_rawBrowser) ? _rawBrowser : null;
 
-if (COOKIES_BROWSER) {
-  console.log(`✅  YouTube cookies enabled (browser: ${COOKIES_BROWSER})`);
+// Detect which browsers are actually available
+const availableBrowsers = [];
+const browserPaths = {
+  chrome: ["/snap/bin/chromium", "/usr/bin/chromium", "/usr/bin/chromium-browser"],
+  chromium: ["/snap/bin/chromium", "/usr/bin/chromium", "/usr/bin/chromium-browser"],
+  firefox: ["/usr/bin/firefox"],
+  brave: ["/usr/bin/brave-browser"],
+  edge: ["/usr/bin/microsoft-edge-stable"],
+};
+
+for (const [browser, paths] of Object.entries(browserPaths)) {
+  if (paths.some(p => fs.existsSync(p))) {
+    availableBrowsers.push(browser);
+  }
+}
+
+if (availableBrowsers.length === 0) {
+  console.warn(`⚠️  No browsers detected for cookie extraction!`);
 } else {
-  console.error(`❌  YOUTUBE_COOKIES_BROWSER not set! YouTube will block downloads.`);
-  console.error(`    Add to Render environment variables: YOUTUBE_COOKIES_BROWSER=chrome`);
+  console.log(`🌐 Available browsers: ${availableBrowsers.join(", ")}`);
+}
+
+if (COOKIES_BROWSER) {
+  if (availableBrowsers.includes(COOKIES_BROWSER)) {
+    console.log(`✅  YouTube cookies enabled (browser: ${COOKIES_BROWSER})`);
+  } else {
+    console.error(`❌  YOUTUBE_COOKIES_BROWSER=${COOKIES_BROWSER} but browser NOT installed!`);
+    console.error(`    Available: ${availableBrowsers.join(", ") || "none"}`);
+    console.error(`    Set YOUTUBE_COOKIES_BROWSER to one of: ${availableBrowsers.join(", ") || "none available"}`);
+  }
+} else {
+  console.warn(`⚠️  YOUTUBE_COOKIES_BROWSER not set! (Available: ${availableBrowsers.join(", ") || "none"})`);
+  console.warn(`    Set in Render environment variables: YOUTUBE_COOKIES_BROWSER=${availableBrowsers[0] || "firefox"}`);
 }
 
 if (_rawBrowser && !COOKIES_BROWSER) console.warn(`⚠️  Invalid YOUTUBE_COOKIES_BROWSER value: "${_rawBrowser}" — ignored`);
