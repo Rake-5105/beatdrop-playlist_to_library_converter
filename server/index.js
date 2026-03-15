@@ -472,7 +472,8 @@ app.get("/api/download", (req, res) => {
     "--add-header", "Sec-Fetch-Dest:empty",
     "--add-header", "Sec-Fetch-Mode:cors",
     "--add-header", "Sec-Fetch-Site:cross-site",
-    "--extractor-args", "youtube:skip=hls/dash",
+    "--add-header", "Referer:https://www.youtube.com/",
+    "--extractor-args", "youtube:consent_required=False,age_gate=False",
     "--ignore-errors",
     "-o", "-",
     "--no-playlist",
@@ -541,17 +542,18 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
     "--socket-timeout", "30",
     "--retries", "10",
     "--fragment-retries", "10",
-    // Use multiple player clients to avoid bot detection
-    "--extractor-args", "youtube:player_client=android,web,ios",
+    // Try web player first (most reliable for auth bypass)
+    "--extractor-args", "youtube:player_client=web;player_skip=javascript,config",
+    // Disable age gate and consent checks
+    "--extractor-args", "youtube:consent_required=False,age_gate=False",
     // Modern Chrome user agent
     "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    // Add HTTP headers to look more like a real browser
+    // Add HTTP headers to look like real browser
     "--add-header", "Accept-Language:en-US,en;q=0.9",
     "--add-header", "Sec-Fetch-Dest:empty",
     "--add-header", "Sec-Fetch-Mode:cors",
     "--add-header", "Sec-Fetch-Site:cross-site",
-    // Skip age-gate and other checks
-    "--extractor-args", "youtube:skip=hls/dash",
+    "--add-header", "Referer:https://www.youtube.com/",
     // Don't abort on unavailable format
     "--ignore-errors",
     "-o", `${tmpBase}.%(ext)s`,
@@ -707,13 +709,14 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
       "--audio-format", codec,
       "--audio-quality", audioQuality,
       "--no-warnings",
-      // Drop extractor-args override — let yt-dlp pick the best client automatically
       sourceUrl,
       "--force-ipv4",
       "--socket-timeout", "30",
-      "--retries", "8",
-      "--fragment-retries", "8",
-      "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "--retries", "10",
+      "--fragment-retries", "10",
+      // Try android player client as fallback (different code path)
+      "--extractor-args", "youtube:player_client=android",
+      "--user-agent", "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
       "--add-header", "Accept-Language:en-US,en;q=0.9",
       "--add-header", "Sec-Fetch-Dest:empty",
       "--add-header", "Sec-Fetch-Mode:cors",
@@ -728,8 +731,12 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
   if (!result.ok) {
     // Check if YouTube is blocking due to bot detection
     if (result.err && result.err.includes("Sign in to confirm you're not a bot")) {
-      console.error(`[dl ${index}] ❌  YouTube is blocking downloads (bot detection)`);
-      console.error(`[dl ${index}] 🔧 Fix: Set YOUTUBE_COOKIES_BROWSER environment variable in Render`);
+      console.error(`[dl ${index}] ❌  YouTube REQUIRES AUTHENTICATION for this content`);
+      console.error(`[dl ${index}] 📌 This is a YouTube API/authentication limitation`);
+      console.error(`[dl ${index}] 🔧 Solutions:`);
+      console.error(`[dl ${index}]    1. Try a different video/playlist`);
+      console.error(`[dl ${index}]    2. Use Spotify playlists instead (if available)`);
+      console.error(`[dl ${index}]    3. Provide YouTube authentication via cookies (advanced)`);
       return null;
     }
     console.error(`[dl ${index}] ❌  All download attempts failed`);
@@ -749,10 +756,15 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
   console.error(`[dl ${index}] ❌  No output file found after successful exit`);
   console.error(`[dl ${index}] 🔍 DIAGNOSTIC: yt-dlp said OK but produced nothing`);
   if (result.err && result.err.length > 0) {
-    console.error(`[dl ${index}] 📋 Last stderr line: ${result.err.split('\n').filter(l => l.trim()).pop()}`);
+    const lastErr = result.err.split('\n').filter(l => l.trim()).pop();
+    console.error(`[dl ${index}] 📋 Last stderr: ${lastErr}`);
+    // Check all error variations
+    if (lastErr.includes("Sign in") || lastErr.includes("bot") || lastErr.includes("authentication")) {
+      console.error(`[dl ${index}] 🔐 REASON: YouTube authentication required`);
+      console.error(`[dl ${index}] ℹ️  This video/playlist requires authentication to access`);
+    }
   }
-  console.error(`[dl ${index}] 🔧 Most likely: YouTube is blocking (bot detection or cookies issue)`);
-  console.error(`[dl ${index}] 💡 Make sure YOUTUBE_COOKIES_BROWSER is set in Render environment!`);
+  console.error(`[dl ${index}] 💡 Try: Different video, Spotify playlist, or provide YouTube auth`);
   return null;
 }
 
