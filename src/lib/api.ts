@@ -36,11 +36,28 @@ const BACKEND = RAW_BACKEND
     ? "http://localhost:3001"
     : "";
 
+console.log("🔧 Backend configuration:", {
+  RAW_BACKEND,
+  IS_LOCALHOST,
+  BACKEND,
+  VITE_API_BASE_URL: import.meta.env.VITE_API_BASE_URL,
+});
+
 function getBackendBaseUrl(): string {
-  if (BACKEND) return BACKEND;
-  throw new Error(
-    "Frontend backend URL is not configured. Set VITE_API_BASE_URL in Netlify to your Render backend URL."
-  );
+  if (BACKEND) {
+    console.log("✅ Using backend:", BACKEND);
+    return BACKEND;
+  }
+  const msg = "❌ CRITICAL: Frontend backend URL is not configured!\n\n" +
+    "✅ TO FIX:\n" +
+    "1. Go to Netlify Dashboard → Site Settings → Build & Deploy → Environment\n" +
+    "2. Add environment variable:\n" +
+    "   Key: VITE_API_BASE_URL\n" +
+    "   Value: https://your-backend.onrender.com\n" +
+    "3. Redeploy the site\n\n" +
+    "Without this, the frontend cannot connect to the download backend.";
+  console.error(msg);
+  throw new Error(msg);
 }
 
 // ── Backend health check (cached 10 s so it never blocks twice) ──
@@ -140,107 +157,152 @@ export async function downloadAllTracks(
   onStatusMessage?: (msg: string) => void,
   quality = "best"
 ): Promise<void> {
-  // Phase 1: resolve YouTube videoIds IN PARALLEL (no bar movement, just status text)
-  const RESOLVE_CONCURRENCY = 4;
-  onProgress(0, 100);
-  onStatusMessage?.("Finding tracks on YouTube…");
+  try {
+    console.log("🎬 downloadAllTracks START", { tracksCount: tracks.length, format, quality });
+    
+    // Phase 1: resolve YouTube videoIds IN PARALLEL (no bar movement, just status text)
+    const RESOLVE_CONCURRENCY = 4;
+    onProgress(0, 100);
+    onStatusMessage?.("Finding tracks on YouTube…");
 
-  const resolvedSlots: ({ videoId: string; title: string; artist: string } | null)[] =
-    new Array(tracks.length).fill(null);
-  let resolvedCount = 0;
+    const resolvedSlots: ({ videoId: string; title: string; artist: string } | null)[] =
+      new Array(tracks.length).fill(null);
+    let resolvedCount = 0;
 
-  for (let i = 0; i < tracks.length; i += RESOLVE_CONCURRENCY) {
-    const batch = tracks.slice(i, i + RESOLVE_CONCURRENCY);
-    await Promise.all(
-      batch.map(async (track, j) => {
-        const idx = i + j;
-        let vid = track.videoId;
-        if (!vid && track.source === "spotify") {
-          vid = (await searchYouTube(`${track.title} ${track.artist}`)) ?? undefined;
-        }
-        if (!vid && track.source === "youtube") vid = track.id;
-        if (!vid) {
-          onError?.(`Could not find "${track.title}" on YouTube — skipped.`, track);
-          return;
-        }
-        resolvedSlots[idx] = { videoId: vid, title: track.title, artist: track.artist };
-        resolvedCount++;
-        onStatusMessage?.(`Finding tracks… ${resolvedCount}/${tracks.length}`);
-      })
+    for (let i = 0; i < tracks.length; i += RESOLVE_CONCURRENCY) {
+      const batch = tracks.slice(i, i + RESOLVE_CONCURRENCY);
+      console.log(`🔍 Resolving batch ${i}-${i + batch.length - 1}`);
+      
+      await Promise.all(
+        batch.map(async (track, j) => {
+          const idx = i + j;
+          try {
+            let vid = track.videoId;
+            console.log(`  [${idx}] Starting resolution for "${track.title}" (source: ${track.source})`);
+            
+            if (!vid && track.source === "spotify") {
+              console.log(`  [${idx}] Searching YouTube for Spotify track...`);
+              vid = (await searchYouTube(`${track.title} ${track.artist}`)) ?? undefined;
+              if (vid) console.log(`  [${idx}] ✅ Found: ${vid}`);
+              else console.log(`  [${idx}] ❌ Not found on YouTube`);
+            }
+            if (!vid && track.source === "youtube") {
+              console.log(`  [${idx}] Using YouTube track ID directly`);
+              vid = track.id;
+            }
+            if (!vid) {
+              console.warn(`  [${idx}] ❌ Could not resolve: "${track.title}"`);
+              onError?.(`Could not find "${track.title}" on YouTube — skipped.`, track);
+              return;
+            }
+            resolvedSlots[idx] = { videoId: vid, title: track.title, artist: track.artist };
+            resolvedCount++;
+            console.log(`  [${idx}] ✅ Resolved (${resolvedCount}/${tracks.length})`);
+            onStatusMessage?.(`Finding tracks… ${resolvedCount}/${tracks.length}`);
+          } catch (err) {
+            console.error(`  [${idx}] 🔥 Error during resolution:`, err);
+            onError?.(`Error resolving "${track.title}": ${err instanceof Error ? err.message : String(err)}`, track);
+          }
+        })
+      );
+    }
+
+    const resolved = resolvedSlots.filter(
+      (x): x is { videoId: string; title: string; artist: string } => x !== null
     );
-  }
+    console.log(`📦 Resolved ${resolved.length}/${tracks.length} tracks`);
+    
+    if (resolved.length === 0) {
+      console.error("❌ NO TRACKS RESOLVED!");
+      throw new Error("No tracks could be resolved to a YouTube video.");
+    }
 
-  const resolved = resolvedSlots.filter(
-    (x): x is { videoId: string; title: string; artist: string } => x !== null
-  );
-  if (resolved.length === 0) throw new Error("No tracks could be resolved to a YouTube video.");
+    // Phase 2: start background job — progress bar resets to 0 and goes to 100%
+    onProgress(0, resolved.length);
+    onStatusMessage?.(`Starting download of ${resolved.length} tracks… (this may take 10–15 minutes)`);
+    console.log(`🚀 Sending download request for ${resolved.length} tracks`);
 
-  // Phase 2: start background job — progress bar resets to 0 and goes to 100%
-  onProgress(0, resolved.length);
-  onStatusMessage?.(`Starting download of ${resolved.length} tracks… (this may take 10–15 minutes)`);
+    const backend = getBackendBaseUrl();
+    console.log(`📡 Backend URL: ${backend}`);
+    console.log(`📤 POST /api/download-zip with:`, { tracksCount: resolved.length, format, quality, playlistName });
+    
+    const startRes = await fetch(`${backend}/api/download-zip`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tracks: resolved, format, quality, playlistName }),
+    });
+    
+    console.log(`📥 Response status:`, startRes.status, startRes.statusText);
+    
+    if (!startRes.ok) {
+      const err = await startRes.json().catch(() => ({ error: startRes.statusText }));
+      throw new Error(err.error ?? "Failed to start ZIP job");
+    }
+    const { jobId } = await startRes.json();
+    console.log(`✅ Job created:`, jobId);
 
-  const backend = getBackendBaseUrl();
-  const startRes = await fetch(`${backend}/api/download-zip`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tracks: resolved, format, quality, playlistName }),
-  });
-  if (!startRes.ok) {
-    const err = await startRes.json().catch(() => ({ error: startRes.statusText }));
-    throw new Error(err.error ?? "Failed to start ZIP job");
-  }
-  const { jobId } = await startRes.json();
+    // Phase 2: SSE progress — bar goes 0 → 100% over actual downloads
+    await new Promise<void>((resolve, reject) => {
+      console.log(`🎧 Opening SSE connection: /api/progress/${jobId}`);
+      const evtSource = new EventSource(`${backend}/api/progress/${jobId}`);
 
-  // Phase 2: SSE progress — bar goes 0 → 100% over actual downloads
-  await new Promise<void>((resolve, reject) => {
-    const evtSource = new EventSource(`${backend}/api/progress/${jobId}`);
+      evtSource.onmessage = async (e) => {
+        let data: { type: string; done?: number; total?: number; track?: string; message?: string; remainingText?: string };
+        try { data = JSON.parse(e.data); } catch { return; }
 
-    evtSource.onmessage = async (e) => {
-      let data: { type: string; done?: number; total?: number; track?: string; message?: string; remainingText?: string };
-      try { data = JSON.parse(e.data); } catch { return; }
+        console.log(`📊 SSE message:`, data.type);
 
-      if (data.type === "progress" && data.done != null && data.total != null) {
-        onProgress(data.done, data.total);
-        const timeLabel = data.remainingText ? ` — ${data.remainingText}` : "";
-        onStatusMessage?.(`Downloading ${data.done}/${data.total}: ${data.track ?? ""}${timeLabel}`);
+        if (data.type === "progress" && data.done != null && data.total != null) {
+          onProgress(data.done, data.total);
+          const timeLabel = data.remainingText ? ` — ${data.remainingText}` : "";
+          onStatusMessage?.(`Downloading ${data.done}/${data.total}: ${data.track ?? ""}${timeLabel}`);
 
-      } else if (data.type === "zipping") {
-        onProgress(resolved.length - 1, resolved.length);
-        onStatusMessage?.("Building ZIP archive…");
+        } else if (data.type === "zipping") {
+          onProgress(resolved.length - 1, resolved.length);
+          onStatusMessage?.("Building ZIP archive…");
 
-      } else if (data.type === "done") {
-        evtSource.close();
-        onProgress(resolved.length, resolved.length);
-        onStatusMessage?.("Preparing download…");
+        } else if (data.type === "done") {
+          console.log(`✅ Download complete, fetching ZIP file...`);
+          evtSource.close();
+          onProgress(resolved.length, resolved.length);
+          onStatusMessage?.("Preparing download…");
 
-        try {
-          const fileRes = await fetch(`${backend}/api/download-zip/file/${jobId}`);
-          if (!fileRes.ok) throw new Error("ZIP file not available");
-          const blob = await fileRes.blob();
-          const blobUrl = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = blobUrl;
-          a.download = `${playlistName}.zip`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
-          resolve();
-        } catch (err) {
-          reject(err);
+          try {
+            const fileRes = await fetch(`${backend}/api/download-zip/file/${jobId}`);
+            if (!fileRes.ok) throw new Error("ZIP file not available");
+            const blob = await fileRes.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = blobUrl;
+            a.download = `${playlistName}.zip`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+
+        } else if (data.type === "error") {
+          console.error(`❌ SSE error:`, data.message);
+          evtSource.close();
+          reject(new Error(data.message ?? "ZIP job failed"));
         }
+      };
 
-      } else if (data.type === "error") {
+      evtSource.onerror = () => {
+        console.error(`❌ SSE connection error`);
         evtSource.close();
-        reject(new Error(data.message ?? "ZIP job failed"));
-      }
-    };
-
-    evtSource.onerror = () => {
-      evtSource.close();
-      reject(new Error("Lost connection to download server"));
-    };
-  });
+        reject(new Error("Lost connection to download server"));
+      };
+    });
+    
+    console.log(`🎉 downloadAllTracks COMPLETE`);
+  } catch (err) {
+    console.error(`💥 downloadAllTracks ERROR:`, err);
+    throw err;
+  }
 }
 
 
