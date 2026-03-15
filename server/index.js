@@ -15,17 +15,25 @@ const originalLog = console.log;
 const originalWarn = console.warn;
 const originalError = console.error;
 
-console.log = (...args) => {
+function flushLog(...args) {
   originalLog(...args);
-  process.stdout.write("");
+  // Aggressive flush
+  if (process.stdout && process.stdout.write) {
+    process.stdout.write("");
+  }
+  if (typeof process !== "undefined" && process.stderr) {
+    process.stderr.write("");
+  }
+}
+
+console.log = (...args) => {
+  flushLog(...args);
 };
 console.warn = (...args) => {
-  originalWarn(...args);
-  process.stdout.write("");
+  flushLog("[WARN]", ...args);
 };
 console.error = (...args) => {
-  originalError(...args);
-  process.stderr.write("");
+  flushLog("[ERROR]", ...args);
 };
 
 const require = createRequire(import.meta.url);
@@ -655,6 +663,9 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
 async function runDownloadJob(jobId, tracks, codec, audioQuality) {
   try {
     console.log(`[job ${jobId.slice(0,6)}] 🎬 runDownloadJob START`);
+    console.log(`[job ${jobId.slice(0,6)}] Received tracks:`, tracks);
+    console.log(`[job ${jobId.slice(0,6)}] Tracks array length:`, Array.isArray(tracks) ? tracks.length : "NOT AN ARRAY");
+    
     const job = jobs.get(jobId);
     if (!job) {
       console.error(`[job ${jobId.slice(0,6)}] ❌ Job not found in jobs map!`);
@@ -665,6 +676,12 @@ async function runDownloadJob(jobId, tracks, codec, audioQuality) {
     const jobStartTime = Date.now();
     console.log(`[job ${jobId.slice(0,6)}] Downloading ${tracks.length} tracks with ${ZIP_CONCURRENCY} parallel workers`);
 
+    if (!Array.isArray(tracks) || tracks.length === 0) {
+      console.error(`[job ${jobId.slice(0,6)}] ❌ CRITICAL: tracks is not an array or is empty!`);
+      broadcast(jobId, { type: "error", message: "No tracks to download" });
+      return;
+    }
+
     for (let i = 0; i < tracks.length; i += ZIP_CONCURRENCY) {
       console.log(`[job ${jobId.slice(0,6)}] Batch ${i}-${Math.min(i + ZIP_CONCURRENCY - 1, tracks.length - 1)}`);
       if (!jobs.has(jobId)) {
@@ -672,10 +689,17 @@ async function runDownloadJob(jobId, tracks, codec, audioQuality) {
         return;
       }
       const batch = tracks.slice(i, i + ZIP_CONCURRENCY);
+      console.log(`[job ${jobId.slice(0,6)}] Processing batch of ${batch.length} tracks`);
+      
       await Promise.all(
         batch.map(async ({ videoId, title = "track", artist = "" }, j) => {
           const idx = i + j;
-          if (!videoId) return;
+          console.log(`[job ${jobId.slice(0,6)}] Batch map - track ${idx}, videoId: ${videoId}`);
+          
+          if (!videoId) {
+            console.warn(`[job ${jobId.slice(0,6)}] No videoId for track ${idx}, skipping`);
+            return;
+          }
           // Security: validate videoId before passing to yt-dlp
           if (!/^[A-Za-z0-9_-]{1,20}$/.test(videoId)) {
             console.warn(`[job ${jobId.slice(0,6)}] Skipped invalid videoId: ${videoId}`);
