@@ -2,4 +2,4 @@
 providers = ["nixpacks"]
 
 [[nixpacks.install]]
-apt-get = ["ffmpeg", "firefox"]
+apt-get = ["ffmpeg"]

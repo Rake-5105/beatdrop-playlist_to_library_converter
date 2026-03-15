@@ -100,46 +100,16 @@ const VALID_BROWSERS = new Set(["brave", "chrome", "chromium", "edge", "firefox"
 const _rawBrowser = process.env.YOUTUBE_COOKIES_BROWSER?.trim();
 const COOKIES_BROWSER = _rawBrowser && VALID_BROWSERS.has(_rawBrowser) ? _rawBrowser : null;
 
-// Detect which browsers are actually available
-const availableBrowsers = [];
-const browserPaths = {
-  chrome: ["/snap/bin/chromium", "/usr/bin/chromium", "/usr/bin/chromium-browser"],
-  chromium: ["/snap/bin/chromium", "/usr/bin/chromium", "/usr/bin/chromium-browser"],
-  firefox: ["/usr/bin/firefox"],
-  brave: ["/usr/bin/brave-browser"],
-  edge: ["/usr/bin/microsoft-edge-stable"],
-};
+// NOTE: REMOVED browser-based cookie extraction
+// Reason: Can't extract cookies from headless browser that was never logged in
+// Solution: Using yt-dlp's multiple player clients + browser headers instead
+console.log(`ℹ️  Using headless download method (no browser cookies)`);
+console.log(`ℹ️  Using multiple YouTube player clients for reliability`);
 
-for (const [browser, paths] of Object.entries(browserPaths)) {
-  if (paths.some(p => fs.existsSync(p))) {
-    availableBrowsers.push(browser);
-  }
-}
 
-if (availableBrowsers.length === 0) {
-  console.warn(`⚠️  No browsers detected for cookie extraction!`);
-} else {
-  console.log(`🌐 Available browsers: ${availableBrowsers.join(", ")}`);
-}
-
-if (COOKIES_BROWSER) {
-  if (availableBrowsers.includes(COOKIES_BROWSER)) {
-    console.log(`✅  YouTube cookies enabled (browser: ${COOKIES_BROWSER})`);
-  } else {
-    console.error(`❌  YOUTUBE_COOKIES_BROWSER=${COOKIES_BROWSER} but browser NOT installed!`);
-    console.error(`    Available: ${availableBrowsers.join(", ") || "none"}`);
-    console.error(`    Set YOUTUBE_COOKIES_BROWSER to one of: ${availableBrowsers.join(", ") || "none available"}`);
-  }
-} else {
-  console.warn(`⚠️  YOUTUBE_COOKIES_BROWSER not set! (Available: ${availableBrowsers.join(", ") || "none"})`);
-  console.warn(`    Set in Render environment variables: YOUTUBE_COOKIES_BROWSER=${availableBrowsers[0] || "firefox"}`);
-}
-
-if (_rawBrowser && !COOKIES_BROWSER) console.warn(`⚠️  Invalid YOUTUBE_COOKIES_BROWSER value: "${_rawBrowser}" — ignored`);
-
-function cookiesArg() {
-  return COOKIES_BROWSER ? ["--cookies-from-browser", COOKIES_BROWSER] : [];
-}
+// REMOVED: cookiesArg() function
+// Reason: Can't extract cookies from headless browser that was never logged in
+// Solution: Use browser-like headers and yt-dlp extractor args instead
 
 async function ensureYtDlp() {
   try {
@@ -497,8 +467,13 @@ app.get("/api/download", (req, res) => {
     "-x",
     "--audio-format", codec,
     "--audio-quality", audioQuality,
-    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    ...cookiesArg(),
+    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "--add-header", "Accept-Language:en-US,en;q=0.9",
+    "--add-header", "Sec-Fetch-Dest:empty",
+    "--add-header", "Sec-Fetch-Mode:cors",
+    "--add-header", "Sec-Fetch-Site:cross-site",
+    "--extractor-args", "youtube:skip=hls/dash",
+    "--ignore-errors",
     "-o", "-",
     "--no-playlist",
     "--no-warnings",
@@ -564,11 +539,21 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
     sourceUrl,
     "--force-ipv4",
     "--socket-timeout", "30",
-    "--retries", "8",
-    "--fragment-retries", "8",
-    "--extractor-args", "youtube:player_client=android,web",
-    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    ...cookiesArg(),
+    "--retries", "10",
+    "--fragment-retries", "10",
+    // Use multiple player clients to avoid bot detection
+    "--extractor-args", "youtube:player_client=android,web,ios",
+    // Modern Chrome user agent
+    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    // Add HTTP headers to look more like a real browser
+    "--add-header", "Accept-Language:en-US,en;q=0.9",
+    "--add-header", "Sec-Fetch-Dest:empty",
+    "--add-header", "Sec-Fetch-Mode:cors",
+    "--add-header", "Sec-Fetch-Site:cross-site",
+    // Skip age-gate and other checks
+    "--extractor-args", "youtube:skip=hls/dash",
+    // Don't abort on unavailable format
+    "--ignore-errors",
     "-o", `${tmpBase}.%(ext)s`,
     "--no-playlist",
   ];
@@ -728,7 +713,12 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
       "--socket-timeout", "30",
       "--retries", "8",
       "--fragment-retries", "8",
-      ...cookiesArg(),
+      "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "--add-header", "Accept-Language:en-US,en;q=0.9",
+      "--add-header", "Sec-Fetch-Dest:empty",
+      "--add-header", "Sec-Fetch-Mode:cors",
+      "--add-header", "Sec-Fetch-Site:cross-site",
+      "--ignore-errors",
       "-o", `${tmpBase}.%(ext)s`,
       "--no-playlist",
     ];
