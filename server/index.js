@@ -462,6 +462,7 @@ app.get("/api/download", (req, res) => {
     "-x",
     "--audio-format", codec,
     "--audio-quality", audioQuality,
+    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
     ...cookiesArg(),
     "-o", "-",
     "--no-playlist",
@@ -531,6 +532,7 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
     "--retries", "8",
     "--fragment-retries", "8",
     "--extractor-args", "youtube:player_client=android,web",
+    "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
     ...cookiesArg(),
     "-o", `${tmpBase}.%(ext)s`,
     "--no-playlist",
@@ -699,7 +701,14 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
   }
 
   if (!result.ok) {
+    // Check if YouTube is blocking due to bot detection
+    if (result.err && result.err.includes("Sign in to confirm you're not a bot")) {
+      console.error(`[dl ${index}] ❌  YouTube is blocking downloads (bot detection)`);
+      console.error(`[dl ${index}] 🔧 Fix: Set YOUTUBE_COOKIES_BROWSER environment variable in Render`);
+      return null;
+    }
     console.error(`[dl ${index}] ❌  All download attempts failed`);
+    if (result.err) console.error(`[dl ${index}] Error: ${result.err.slice(0, 500)}`);
     return null;
   }
 
