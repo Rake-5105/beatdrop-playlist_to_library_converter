@@ -9,6 +9,25 @@ import crypto from "crypto";
 import { spawn } from "child_process";
 import archiver from "archiver";
 
+// ── UNBUFFERED logging for Render ──
+// Force immediate output, don't buffer if logs are missing
+const originalLog = console.log;
+const originalWarn = console.warn;
+const originalError = console.error;
+
+console.log = (...args) => {
+  originalLog(...args);
+  process.stdout.write("");
+};
+console.warn = (...args) => {
+  originalWarn(...args);
+  process.stdout.write("");
+};
+console.error = (...args) => {
+  originalError(...args);
+  process.stderr.write("");
+};
+
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const YTDlpWrap = require("yt-dlp-wrap").default;
@@ -463,14 +482,32 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
   const runOnce = (args, label) =>
     new Promise((resolve) => {
       console.log(`[dl ${index}] Running ${label}...`);
+      console.log(`[dl ${index}] Binary: ${ytDlpBinaryPath}`);
+      console.log(`[dl ${index}] Binary exists: ${fs.existsSync(ytDlpBinaryPath)}`);
       console.log(`[dl ${index}] Full args: ${JSON.stringify(args)}`);
-      const proc = spawn(ytDlpBinaryPath, args);
+      
+      let proc;
+      try {
+        proc = spawn(ytDlpBinaryPath, args);
+      } catch (spawnErr) {
+        console.error(`[dl ${index}] ❌ SPAWN ERROR: ${spawnErr.message}`);
+        return resolve({ ok: false, err: spawnErr.message, out: "" });
+      }
+
+      if (!proc) {
+        console.error(`[dl ${index}] ❌ SPAWN returned null`);
+        return resolve({ ok: false, err: "spawn returned null", out: "" });
+      }
+
+      console.log(`[dl ${index}] Process spawned (PID: ${proc.pid})`);
+      
       let outBuf = "";
       let errBuf = "";
       const killTimer = setTimeout(() => {
         proc.kill("SIGTERM");
         console.error(`[dl ${index}] ${label} timeout (10m), killed`);
       }, 10 * 60 * 1000);
+      
       proc.stdout.on("data", (chunk) => {
         const text = chunk.toString();
         outBuf += text;
@@ -616,30 +653,42 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
 }
 
 async function runDownloadJob(jobId, tracks, codec, audioQuality) {
-  const job = jobs.get(jobId);
-  const tmpFiles = new Array(tracks.length).fill(null);
-  const jobStartTime = Date.now();
+  try {
+    console.log(`[job ${jobId.slice(0,6)}] 🎬 runDownloadJob START`);
+    const job = jobs.get(jobId);
+    if (!job) {
+      console.error(`[job ${jobId.slice(0,6)}] ❌ Job not found in jobs map!`);
+      throw new Error("Job not found");
+    }
+    
+    const tmpFiles = new Array(tracks.length).fill(null);
+    const jobStartTime = Date.now();
+    console.log(`[job ${jobId.slice(0,6)}] Downloading ${tracks.length} tracks with ${ZIP_CONCURRENCY} parallel workers`);
 
-  for (let i = 0; i < tracks.length; i += ZIP_CONCURRENCY) {
-    if (!jobs.has(jobId)) return; // cancelled
-    const batch = tracks.slice(i, i + ZIP_CONCURRENCY);
-    await Promise.all(
-      batch.map(async ({ videoId, title = "track", artist = "" }, j) => {
-        const idx = i + j;
-        if (!videoId) return;
-        // Security: validate videoId before passing to yt-dlp
-        if (!/^[A-Za-z0-9_-]{1,20}$/.test(videoId)) {
-          console.warn(`[job ${jobId.slice(0,6)}] Skipped invalid videoId: ${videoId}`);
-          return;
-        }
-        const safeTitle = `${String(title)} - ${String(artist)}`
-          .replace(/[<>:"/\\|?*\x00-\x1f]/g, "").trim();
-        console.log(`[job ${jobId.slice(0,6)}] dl ${idx + 1}/${tracks.length} – ${safeTitle}`);
-        const tmpPath = await downloadToTempFile(videoId, codec, audioQuality, `${jobId}-${idx}`);
-        tmpFiles[idx] = tmpPath ? { tmpPath, safeTitle } : null;
-        if (!tmpPath) console.warn(`[job ${jobId.slice(0,6)}] ⚠️  download returned null for: ${safeTitle}`);
-        job.done++;
-        job.lastTrack = safeTitle;
+    for (let i = 0; i < tracks.length; i += ZIP_CONCURRENCY) {
+      console.log(`[job ${jobId.slice(0,6)}] Batch ${i}-${Math.min(i + ZIP_CONCURRENCY - 1, tracks.length - 1)}`);
+      if (!jobs.has(jobId)) {
+        console.log(`[job ${jobId.slice(0,6)}] Job cancelled, returning`);
+        return;
+      }
+      const batch = tracks.slice(i, i + ZIP_CONCURRENCY);
+      await Promise.all(
+        batch.map(async ({ videoId, title = "track", artist = "" }, j) => {
+          const idx = i + j;
+          if (!videoId) return;
+          // Security: validate videoId before passing to yt-dlp
+          if (!/^[A-Za-z0-9_-]{1,20}$/.test(videoId)) {
+            console.warn(`[job ${jobId.slice(0,6)}] Skipped invalid videoId: ${videoId}`);
+            return;
+          }
+          const safeTitle = `${String(title)} - ${String(artist)}`
+            .replace(/[<>:"/\\|?*\x00-\x1f]/g, "").trim();
+          console.log(`[job ${jobId.slice(0,6)}] dl ${idx + 1}/${tracks.length} – ${safeTitle}`);
+          const tmpPath = await downloadToTempFile(videoId, codec, audioQuality, `${jobId}-${idx}`);
+          tmpFiles[idx] = tmpPath ? { tmpPath, safeTitle } : null;
+          if (!tmpPath) console.warn(`[job ${jobId.slice(0,6)}] ⚠️  download returned null for: ${safeTitle}`);
+          job.done++;
+          job.lastTrack = safeTitle;
 
         // ── Remaining time estimate ───────────────────────────
         const elapsedSec = (Date.now() - jobStartTime) / 1000;
@@ -738,6 +787,17 @@ async function runDownloadJob(jobId, tracks, codec, audioQuality) {
     if (j?.zipPath) fs.unlink(j.zipPath, () => {});
     jobs.delete(jobId);
   }, 10 * 60 * 1000);
+  } catch (err) {
+    console.error(`[job ${jobId.slice(0,6)}] 💥 UNHANDLED ERROR IN runDownloadJob:`, err);
+    const job = jobs.get(jobId);
+    if (job) {
+      job.status = "error";
+      job.error = err.message;
+      broadcast(jobId, { type: "error", message: `Critical error: ${err.message}` });
+      job.clients.forEach((c) => c.end());
+    }
+    throw err;
+  }
 }
 
 // POST /api/download-zip – start job, return jobId immediately
@@ -753,10 +813,14 @@ app.post("/api/download-zip", (req, res) => {
   const safePlaylist = String(playlistName).replace(/[<>:"/\\|?*]/g, "").trim() || "playlist";
   const jobId = crypto.randomUUID();
 
+  console.log(`[job ${jobId.slice(0,6)}] === NEW REQUEST ===`);
+  console.log(`[job ${jobId.slice(0,6)}] Tracks: ${tracks.length}, Codec: ${codec}, Quality: ${audioQuality}`);
+
   jobs.set(jobId, { status: "running", done: 0, total: tracks.length, lastTrack: "", zipPath: null, safePlaylist, clients: [], error: null });
   console.log(`[job ${jobId.slice(0,6)}] started – ${tracks.length} tracks → ${safePlaylist}.zip @ ${codec}/${audioQuality}`);
 
   runDownloadJob(jobId, tracks, codec, audioQuality).catch((err) => {
+    console.error(`[job ${jobId.slice(0,6)}] 🔥 CAUGHT ERROR:`, err);
     const job = jobs.get(jobId);
     if (job) { job.status = "error"; job.error = err.message; }
     broadcast(jobId, { type: "error", message: err.message });
@@ -764,6 +828,7 @@ app.post("/api/download-zip", (req, res) => {
     console.error(`[job ${jobId.slice(0,6)}] error:`, err.message);
   });
 
+  console.log(`[job ${jobId.slice(0,6)}] Job enqueued, returning jobId to frontend`);
   res.json({ jobId });
 });
 
