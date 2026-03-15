@@ -506,19 +506,41 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
       tryFind();
     });
 
-  const bestaudioArgs = [
+  // Primary attempt: extract + convert audio to the requested codec
+  const primaryArgs = [
     "-f", "bestaudio/best",
+    "-x",
+    "--audio-format", codec,
+    "--audio-quality", audioQuality,
+    "--ffmpeg-location", ffmpegPath,
     "-q",
     "--no-warnings",
     ...baseArgs,
   ];
-  const result = await runOnce(bestaudioArgs, "bestaudio");
+  let result = await runOnce(primaryArgs, `bestaudio→${codec}`);
+
+  // Fallback: if primary fails, try without explicit format conversion (raw best audio)
   if (!result.ok) {
-    console.error(`[dl ${index}] ❌  bestaudio failed: ${result.err}`);
+    console.warn(`[dl ${index}] ⚠️  Primary attempt failed, trying fallback (raw bestaudio)...`);
+    const fallbackArgs = [
+      "-f", "bestaudio/best",
+      "-x",
+      "--audio-format", codec,
+      "--audio-quality", audioQuality,
+      "--ffmpeg-location", ffmpegPath,
+      "--no-warnings",
+      "--extractor-args", "youtube:player_client=web",
+      ...baseArgs,
+    ];
+    result = await runOnce(fallbackArgs, `fallback→${codec}`);
+  }
+
+  if (!result.ok) {
+    console.error(`[dl ${index}] ❌  All download attempts failed`);
     return null;
   }
 
-  console.log(`[dl ${index}] bestaudio succeeded, now looking for output file...`);
+  console.log(`[dl ${index}] Download succeeded, now looking for output file...`);
   const output = await findOutput();
   if (output) {
     console.log(`[dl ${index}] ✅  Download complete: ${path.basename(output)}`);
