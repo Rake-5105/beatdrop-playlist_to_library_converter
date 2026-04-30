@@ -357,7 +357,7 @@ export async function convertPlaylist(url: string): Promise<ConversionResult> {
   const isYoutube = url.includes("youtube.com") || url.includes("youtu.be");
 
   if (!isSpotify && !isYoutube) {
-    throw new Error("Unsupported URL. Please provide a valid Spotify or YouTube playlist URL.");
+    throw new Error("Unsupported URL. Please provide a valid Spotify or YouTube playlist/track URL.");
   }
 
   try {

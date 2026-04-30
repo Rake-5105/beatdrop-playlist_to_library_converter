@@ -245,14 +245,18 @@ app.get("/api/playlist", async (req, res) => {
   const isYoutube = url.includes("youtube.com") || url.includes("youtu.be");
 
   if (!isSpotify && !isYoutube) {
-    return res.status(400).json({ error: "URL must be a Spotify or YouTube playlist link." });
+    return res.status(400).json({ error: "URL must be a Spotify or YouTube playlist/track link." });
   }
 
   try {
     if (isSpotify) {
-      const match = url.match(/playlist\/([A-Za-z0-9]+)/);
-      const playlistId = match?.[1];
-      if (!playlistId) return res.status(400).json({ error: "Invalid Spotify playlist URL." });
+      const playlistMatch = url.match(/playlist\/([A-Za-z0-9]+)/);
+      const trackMatch = url.match(/track\/([A-Za-z0-9]+)/);
+      const playlistId = playlistMatch?.[1];
+      const trackId = trackMatch?.[1];
+      if (!playlistId && !trackId) {
+        return res.status(400).json({ error: "Invalid Spotify URL. Use a playlist or track link." });
+      }
 
       const clientId = process.env.SPOTIFY_CLIENT_ID;
       const clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
@@ -277,18 +281,6 @@ app.get("/api/playlist", async (req, res) => {
       const token = _cachedSpotifyToken;
       const authHeaders = { Authorization: `Bearer ${token}` };
 
-      const TIMEOUT = AbortSignal.timeout(20_000);
-      // Fetch metadata + first page in parallel
-      const [metaRes, firstRes] = await Promise.all([
-        fetch(`https://api.spotify.com/v1/playlists/${playlistId}`, { headers: authHeaders, signal: TIMEOUT }),
-        fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`, { headers: authHeaders, signal: TIMEOUT }),
-      ]);
-      if (!metaRes.ok) return res.status(502).json({ error: `Spotify API error: ${metaRes.status}` });
-      if (!firstRes.ok) return res.status(502).json({ error: `Spotify API error: ${firstRes.status}` });
-
-      const [meta, firstPage] = await Promise.all([metaRes.json(), firstRes.json()]);
-      const playlistName = meta.name ?? "Spotify Playlist";
-
       const parsePage = (data) =>
         (data.items ?? [])
           .filter((i) => i.track && !i.track.is_local)
@@ -306,54 +298,93 @@ app.get("/api/playlist", async (req, res) => {
             source: "spotify",
             externalUrl: i.track.external_urls?.spotify,
           }));
+      if (playlistId) {
+        const TIMEOUT = AbortSignal.timeout(20_000);
+        // Fetch metadata + first page in parallel
+        const [metaRes, firstRes] = await Promise.all([
+          fetch(`https://api.spotify.com/v1/playlists/${playlistId}`, { headers: authHeaders, signal: TIMEOUT }),
+          fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`, { headers: authHeaders, signal: TIMEOUT }),
+        ]);
+        if (!metaRes.ok) return res.status(502).json({ error: `Spotify API error: ${metaRes.status}` });
+        if (!firstRes.ok) return res.status(502).json({ error: `Spotify API error: ${firstRes.status}` });
 
-      const tracks = parsePage(firstPage);
-      let nextUrl = firstPage.next ?? null;
-      while (nextUrl) {
-        const pageRes = await fetch(nextUrl, { headers: authHeaders, signal: AbortSignal.timeout(20_000) });
-        if (!pageRes.ok) break;
-        const page = await pageRes.json();
-        tracks.push(...parsePage(page));
-        nextUrl = page.next ?? null;
+        const [meta, firstPage] = await Promise.all([metaRes.json(), firstRes.json()]);
+        const playlistName = meta.name ?? "Spotify Playlist";
+
+        const tracks = parsePage(firstPage);
+        let nextUrl = firstPage.next ?? null;
+        while (nextUrl) {
+          const pageRes = await fetch(nextUrl, { headers: authHeaders, signal: AbortSignal.timeout(20_000) });
+          if (!pageRes.ok) break;
+          const page = await pageRes.json();
+          tracks.push(...parsePage(page));
+          nextUrl = page.next ?? null;
+        }
+
+        console.log(`[playlist] Spotify "${playlistName}" — ${tracks.length} tracks`);
+        return res.json({ tracks, playlistName, totalCount: tracks.length, source: "spotify" });
       }
 
-      console.log(`[playlist] Spotify "${playlistName}" — ${tracks.length} tracks`);
-      return res.json({ tracks, playlistName, totalCount: tracks.length, source: "spotify" });
+      const trackRes = await fetch(`https://api.spotify.com/v1/tracks/${trackId}`, {
+        headers: authHeaders,
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!trackRes.ok) {
+        return res.status(502).json({ error: `Spotify API error: ${trackRes.status}` });
+      }
+      const track = await trackRes.json();
+      const artist = (track.artists ?? []).map((a) => a.name).join(", ") || "Unknown";
+      const oneTrack = [{
+        id: track.id,
+        title: track.name ?? "Unknown Title",
+        artist,
+        thumbnail: track.album?.images?.[0]?.url ?? "",
+        duration: (() => {
+          const ms = track.duration_ms;
+          if (!ms) return "";
+          const s = Math.floor(ms / 1000);
+          return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+        })(),
+        source: "spotify",
+        externalUrl: track.external_urls?.spotify,
+      }];
+      const playlistName = `${oneTrack[0].title} - ${artist}`;
+      console.log(`[playlist] Spotify single "${playlistName}"`);
+      return res.json({ tracks: oneTrack, playlistName, totalCount: 1, source: "spotify" });
     }
 
     // ── YouTube via yt-dlp (works with private/unlisted/any playlist) ──
     console.log(`[playlist] Fetching YouTube playlist via yt-dlp: ${url}`);
 
-    // Cap auto-generated mixes (RD...) at 100 tracks — they can be endless
     const listId = (url.match(/[?&]list=([A-Za-z0-9_-]+)/) ?? [])[1] ?? "";
-    const isAutoMix = /^(RD|RDAMPL|RDEM|RDCLAK)/.test(listId);
-
-    const ytdlpArgs = [
-      "--flat-playlist",
-      "--no-warnings",
-      "--print", "%(playlist_title)s\t%(id)s\t%(title)s\t%(uploader)s\t%(channel)s",
-      ...(isAutoMix ? ["--playlist-end", "50"] : []),
-      url,
-    ];
-
-    const { playlistName, tracks } = await new Promise((resolve, reject) => {
-      let playlistName = "YouTube Playlist";
-      const tracks = [];
-      let errBuf = "";
-
-      const proc = spawn(ytDlpBinaryPath, ytdlpArgs);
-
-      let remainder = "";
-      proc.stdout.on("data", (chunk) => {
-        const text = remainder + chunk.toString();
-        const lines = text.split("\n");
-        remainder = lines.pop();
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          const [pTitle, id, title, uploader, channel] = line.split("\t");
-          if (!id || id === "NA") continue;
-          if (pTitle && pTitle !== "NA" && playlistName === "YouTube Playlist") playlistName = pTitle;
-          tracks.push({
+    if (!listId) {
+      const singleTrack = await new Promise((resolve, reject) => {
+        const args = [
+          "--no-playlist",
+          "--no-warnings",
+          "--print", "%(id)s\t%(title)s\t%(uploader)s\t%(channel)s",
+          url,
+        ];
+        let outBuf = "";
+        let errBuf = "";
+        const proc = spawn(ytDlpBinaryPath, args);
+        proc.stdout.on("data", (chunk) => (outBuf += chunk.toString()));
+        proc.stderr.on("data", (chunk) => (errBuf += chunk.toString()));
+        const killTimer = setTimeout(() => {
+          proc.kill();
+          reject(new Error("yt-dlp timed out fetching video"));
+        }, 90_000);
+        proc.on("close", (code) => {
+          clearTimeout(killTimer);
+          const line = outBuf.split("\n").find((l) => l.trim());
+          if (!line) {
+            return reject(new Error(errBuf.trim() || `yt-dlp exited with code ${code}`));
+          }
+          const [id, title, uploader, channel] = line.split("\t");
+          if (!id || id === "NA") {
+            return reject(new Error("Could not extract YouTube video ID"));
+          }
+          resolve({
             id,
             title: title && title !== "NA" ? title : "Unknown Title",
             artist: (uploader && uploader !== "NA" ? uploader : null)
@@ -364,16 +395,48 @@ app.get("/api/playlist", async (req, res) => {
             externalUrl: `https://www.youtube.com/watch?v=${id}`,
             videoId: id,
           });
-        }
+        });
       });
+      const playlistName = singleTrack.title;
+      return res.json({ tracks: [singleTrack], playlistName, totalCount: 1, source: "youtube" });
+    }
 
-      proc.stderr.on("data", (d) => (errBuf += d.toString()));
+    const isAutoMix = /^(RD|RDAMPL|RDEM|RDCLAK)/.test(listId);
+    const autoMixSeed = (listId.match(/^RD([A-Za-z0-9_-]{11})$/) ?? [])[1] ?? "";
 
-      proc.on("close", (code) => {
-        // flush remainder
-        if (remainder.trim()) {
-          const [pTitle, id, title, uploader, channel] = remainder.split("\t");
-          if (id && id !== "NA") {
+    const candidateUrls = isAutoMix
+      ? [
+          autoMixSeed ? `https://www.youtube.com/watch?v=${autoMixSeed}&list=${listId}&start_radio=1` : null,
+          url,
+          listId ? `https://www.youtube.com/playlist?list=${listId}` : null,
+        ].filter(Boolean)
+      : [url];
+
+    const fetchPlaylistViaYtDlp = (targetUrl) =>
+      new Promise((resolve, reject) => {
+        const ytdlpArgs = [
+          "--flat-playlist",
+          "--no-warnings",
+          "--print", "%(playlist_title)s\t%(id)s\t%(title)s\t%(uploader)s\t%(channel)s",
+          ...(isAutoMix ? ["--playlist-end", "20"] : []),
+          targetUrl,
+        ];
+
+        let playlistName = "YouTube Playlist";
+        const tracks = [];
+        let errBuf = "";
+
+        const proc = spawn(ytDlpBinaryPath, ytdlpArgs);
+
+        let remainder = "";
+        proc.stdout.on("data", (chunk) => {
+          const text = remainder + chunk.toString();
+          const lines = text.split("\n");
+          remainder = lines.pop();
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const [pTitle, id, title, uploader, channel] = line.split("\t");
+            if (!id || id === "NA") continue;
             if (pTitle && pTitle !== "NA" && playlistName === "YouTube Playlist") playlistName = pTitle;
             tracks.push({
               id,
@@ -387,15 +450,62 @@ app.get("/api/playlist", async (req, res) => {
               videoId: id,
             });
           }
-        }
-        if (code !== 0 && tracks.length === 0) {
-          return reject(new Error(errBuf.trim() || `yt-dlp exited with code ${code}`));
-        }
-        resolve({ playlistName, tracks });
+        });
+
+        proc.stderr.on("data", (d) => (errBuf += d.toString()));
+
+        const killTimer = setTimeout(() => {
+          proc.kill();
+          reject(new Error("yt-dlp timed out fetching playlist"));
+        }, 180_000);
+
+        proc.on("close", (code) => {
+          clearTimeout(killTimer);
+          if (remainder.trim()) {
+            const [pTitle, id, title, uploader, channel] = remainder.split("\t");
+            if (id && id !== "NA") {
+              if (pTitle && pTitle !== "NA" && playlistName === "YouTube Playlist") playlistName = pTitle;
+              tracks.push({
+                id,
+                title: title && title !== "NA" ? title : "Unknown Title",
+                artist: (uploader && uploader !== "NA" ? uploader : null)
+                     ?? (channel && channel !== "NA" ? channel : null)
+                     ?? "Unknown",
+                thumbnail: `https://i.ytimg.com/vi/${id}/mqdefault.jpg`,
+                source: "youtube",
+                externalUrl: `https://www.youtube.com/watch?v=${id}`,
+                videoId: id,
+              });
+            }
+          }
+
+          if (code !== 0 && tracks.length === 0) {
+            return reject(new Error(errBuf.trim() || `yt-dlp exited with code ${code}`));
+          }
+          resolve({ playlistName, tracks });
+        });
       });
 
-      setTimeout(() => { proc.kill(); reject(new Error("yt-dlp timed out fetching playlist")); }, 180_000);
-    });
+    let playlistName = "YouTube Playlist";
+    let tracks = [];
+    let lastErr = null;
+    for (const candidateUrl of candidateUrls) {
+      try {
+        const result = await fetchPlaylistViaYtDlp(candidateUrl);
+        if (result.tracks.length > 0) {
+          playlistName = result.playlistName;
+          tracks = result.tracks;
+          break;
+        }
+      } catch (err) {
+        lastErr = err;
+        console.warn(`[playlist] candidate failed: ${candidateUrl} — ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    if (tracks.length === 0) {
+      throw (lastErr ?? new Error("Could not fetch tracks from the provided YouTube playlist URL."));
+    }
 
     console.log(`[playlist] YouTube "${playlistName}" — ${tracks.length} tracks`);
     return res.json({ tracks, playlistName, totalCount: tracks.length, source: "youtube" });
@@ -472,6 +582,7 @@ app.get("/api/download", (req, res) => {
     "-x",
     "--audio-format", codec,
     "--audio-quality", audioQuality,
+    "--ffmpeg-location", ffmpegPath,
     "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "--add-header", "Accept-Language:en-US,en;q=0.9",
     "--add-header", "Sec-Fetch-Dest:empty",
@@ -561,6 +672,7 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
     "--add-header", "Referer:https://www.youtube.com/",
     // Don't abort on unavailable format
     "--ignore-errors",
+    "--ffmpeg-location", ffmpegPath,
     "-o", `${tmpBase}.%(ext)s`,
     "--no-playlist",
   ];
@@ -669,8 +781,15 @@ async function downloadToTempFile(videoId, codec, audioQuality, index) {
           });
 
           if (existing.length > 0) {
-            console.log(`[dl ${index}] ✅  Using: ${path.basename(existing[0])}`);
-            return resolve(existing[0]);
+            const preferredExts = codec === "m4a" ? ["m4a", "aac"] : [codec];
+            const preferred = existing.find((p) =>
+              preferredExts.includes(path.extname(p).slice(1).toLowerCase())
+            );
+            const selected = preferred ?? existing[0];
+            console.log(
+              `[dl ${index}] ✅  Using: ${path.basename(selected)}${preferred ? " (preferred codec match)" : ""}`
+            );
+            return resolve(selected);
           }
           if (attempt >= 12) {
             console.warn(`[dl ${index}] ❌  Gave up after 12 retries for ${tmpName}*`);

@@ -31,7 +31,7 @@ export const ConvertSection = ({ onConvert, isLoading = false }: ConvertSectionP
     setError(null);
     const url = playlistUrl.trim();
     if (!url) {
-      setError("Please enter a playlist URL.");
+      setError("Please enter a playlist or track URL.");
       return;
     }
 
@@ -39,19 +39,7 @@ export const ConvertSection = ({ onConvert, isLoading = false }: ConvertSectionP
     const isYoutube = url.includes("youtube.com") || url.includes("youtu.be");
 
     if (!isSpotify && !isYoutube) {
-      setError("Please enter a valid Spotify or YouTube playlist URL.");
-      return;
-    }
-
-    // Detect single YouTube video (no list= param) vs playlist
-    if (isYoutube && !url.includes("list=")) {
-      setError("That looks like a single YouTube video. Please paste a playlist URL — it should contain 'list=' in the link.");
-      return;
-    }
-
-    // Detect single Spotify track vs playlist
-    if (isSpotify && !url.includes("/playlist/")) {
-      setError("That looks like a single Spotify track or album. Please paste a Spotify playlist URL — it should contain '/playlist/' in the link.");
+      setError("Please enter a valid Spotify or YouTube playlist/track URL.");
       return;
     }
 
@@ -64,13 +52,13 @@ export const ConvertSection = ({ onConvert, isLoading = false }: ConvertSectionP
       return;
     }
 
-    toast.info(`Fetching ${isSpotify ? "Spotify" : "YouTube"} playlist — this may take a moment for large playlists...`);
+    toast.info(`Fetching ${isSpotify ? "Spotify" : "YouTube"} link...`);
     onConvert(url);
   };
 
   const placeholderText = isSpotifyFirst
-    ? "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M"
-    : "https://www.youtube.com/playlist?list=PLxxxxxx";
+    ? "https://open.spotify.com/playlist/... or /track/..."
+    : "https://www.youtube.com/playlist?list=... or watch?v=...";
 
   return (
     <section className="w-full animate-fade-in">
@@ -84,11 +72,11 @@ export const ConvertSection = ({ onConvert, isLoading = false }: ConvertSectionP
           <div className="text-center mb-8">
             <h2 className="text-3xl font-black tracking-tight mb-3">
               <span className="bg-gradient-to-b from-foreground to-foreground/60 bg-clip-text text-transparent">
-                Download Your Playlist
+                Download Your Music
               </span>
             </h2>
             <p className="text-muted-foreground text-sm">
-              Paste a Spotify or YouTube playlist URL — get every song as MP3, FLAC, WAV, or M4A
+              Paste a Spotify or YouTube playlist/track URL — download as MP3, FLAC, WAV, or M4A
             </p>
 
             {/* Legal disclaimer */}
@@ -172,11 +160,11 @@ export const ConvertSection = ({ onConvert, isLoading = false }: ConvertSectionP
                   <div className="w-1.5 h-1.5 rounded-full bg-black animate-bounce"></div>
                   <div className="w-1.5 h-1.5 rounded-full bg-black animate-bounce [animation-delay:0.15s]"></div>
                   <div className="w-1.5 h-1.5 rounded-full bg-black animate-bounce [animation-delay:0.3s]"></div>
-                  <span className="ml-1">Loading playlist…</span>
-                </div>
-              ) : (
-                <>Download Playlist — Unlimited Songs</>
-              )}
+                   <span className="ml-1">Loading…</span>
+                 </div>
+               ) : (
+                 <>Download Playlist / Song</>
+               )}
             </Button>
           </div>
 
