@@ -1,4 +1,4 @@
-# Sound Switch Studio 🎵
+# BeatDrop - Playlist to Library Converter 🎵
 
 Download your Spotify and YouTube playlists as audio files.
 
